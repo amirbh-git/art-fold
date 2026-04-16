@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: digital_exhibit
+    ports:
+      - "5432:5432"
+    volumes:
+      - digital_exhibit_pg:/var/lib/postgresql/data
+
+volumes:
+  digital_exhibit_pg:

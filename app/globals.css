@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --canvas: #e8e8e4;
+  --ink: #1a1a1a;
+}
+
+body {
+  color: var(--ink);
+  background: var(--canvas);
+}
+
+@layer utilities {
+  /* 100vh first for older engines; 100dvh wins when supported (dynamic toolbars). */
+  .h-dvh-safe {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .min-h-dvh-safe {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  .pb-safe {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  }
+}

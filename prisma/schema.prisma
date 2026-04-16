@@ -1,0 +1,35 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Exhibit {
+  id           String        @id @default(cuid())
+  /** Exhibit description / theme statement (optional). */
+  theme        String        @default("")
+  /** Display title; defaults to "Untitled Exhibit #n" when omitted at publish. */
+  exhibitTitle String        @default("")
+  /** Curator display name; defaults to "Anonymous" when omitted. */
+  curatorName  String        @default("")
+  createdAt    DateTime      @default(now())
+  slots        ExhibitSlot[]
+}
+
+model ExhibitSlot {
+  id         String  @id @default(cuid())
+  exhibitId  String
+  position   Int
+  source     String  @default("met")
+  objectId   String
+  title      String?
+  artist     String?
+  imageUrl   String?
+  objectUrl  String?
+  exhibit    Exhibit @relation(fields: [exhibitId], references: [id], onDelete: Cascade)
+
+  @@unique([exhibitId, position])
+}

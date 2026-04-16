@@ -1,0 +1,192 @@
+import type { WallSlotPayload } from "./types";
+
+const HARVARD_BASE = "https://api.harvardartmuseums.org";
+
+type HarvardPerson = {
+  role?: string;
+  displayname?: string;
+  name?: string;
+};
+
+type HarvardImage = {
+  iiifbaseuri?: string;
+  baseimageurl?: string;
+};
+
+type HarvardObject = {
+  objectid?: number;
+  id?: number;
+  title?: string;
+  /** Present on list records; used to recover numeric id when objectid is omitted. */
+  primaryimageurl?: string;
+  url?: string;
+  dated?: string;
+  medium?: string;
+  dimensions?: string;
+  department?: string;
+  creditline?: string;
+  people?: HarvardPerson[];
+  images?: HarvardImage[];
+};
+
+type HarvardListResponse = {
+  records?: HarvardObject[];
+};
+
+function recordNumericId(r: HarvardObject): number | null {
+  if (typeof r.objectid === "number") return r.objectid;
+  if (typeof r.id === "number") return r.id;
+  const m = r.url?.match(/\/object\/(\d+)/);
+  if (m?.[1]) {
+    const n = Number(m[1]);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function harvardApiKey(): string | null {
+  const k = process.env.HARVARD_ART_API_KEY?.trim();
+  return k || null;
+}
+
+function harvardDisplayImageUrl(o: HarvardObject): string | null {
+  const img0 = o.images?.[0];
+  const iiif = img0?.iiifbaseuri?.trim();
+  if (iiif) {
+    return `${iiif.replace(/\/$/, "")}/full/843,/0/default.jpg`;
+  }
+  const primary = o.primaryimageurl?.trim();
+  if (!primary) return null;
+  const u = primary.replace(/^http:\/\//i, "https://");
+  if (u.includes("/full/")) return u;
+  if (/_dynmc$/i.test(u) || /\.(jpe?g|png|webp)(\?|$)/i.test(u)) return u;
+  return `${u.replace(/\/$/, "")}/full/843,/0/default.jpg`;
+}
+
+function artistFromPeople(people?: HarvardPerson[]): string {
+  if (!people?.length) return "";
+  const artist =
+    people.find((p) => (p.role ?? "").toLowerCase().includes("artist")) ??
+    people[0];
+  return (artist?.displayname ?? artist?.name ?? "").trim();
+}
+
+export async function fetchHarvardObject(
+  objectId: string,
+): Promise<WallSlotPayload | null> {
+  const key = harvardApiKey();
+  if (!key) return null;
+  const res = await fetch(
+    `${HARVARD_BASE}/object/${encodeURIComponent(objectId)}?apikey=${encodeURIComponent(key)}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return null;
+  const o = (await res.json()) as HarvardObject;
+  const oid = o.objectid ?? o.id;
+  if (oid == null) return null;
+  const imageUrl = harvardDisplayImageUrl(o);
+  if (!imageUrl) return null;
+  const sid = String(oid);
+  return {
+    source: "harvard",
+    objectId: sid,
+    title: (o.title ?? "Untitled").trim() || "Untitled",
+    artist: artistFromPeople(o.people),
+    imageUrl,
+    objectUrl: (o.url ?? "").trim().replace(/^http:\/\//i, "https://"),
+    objectDate: (o.dated ?? "").trim() || undefined,
+    medium: (o.medium ?? "").trim() || undefined,
+    dimensions: (o.dimensions ?? "").trim() || undefined,
+    department: (o.department ?? "").trim() || undefined,
+    creditLine: (o.creditline ?? "").trim() || undefined,
+  };
+}
+
+const KEYWORDS = [
+  "portrait",
+  "landscape",
+  "oil",
+  "watercolor",
+  "figure",
+  "drawing",
+  "venice",
+  "paris",
+  "still life",
+  "allegory",
+  "mythology",
+  "interior",
+  "garden",
+];
+
+function shuffleInPlace<T>(arr: T[]): void {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+async function harvardSearchIds(keyword: string): Promise<number[]> {
+  const key = harvardApiKey();
+  if (!key) return [];
+  const params = new URLSearchParams();
+  params.set("apikey", key);
+  params.set("keyword", keyword);
+  params.set("hasimage", "1");
+  params.set("size", "80");
+  params.set("page", String(Math.floor(Math.random() * 40) + 1));
+  const res = await fetch(`${HARVARD_BASE}/object?${params}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const json = (await res.json()) as HarvardListResponse;
+  const records = json.records ?? [];
+  return records
+    .map((r) => recordNumericId(r))
+    .filter((id): id is number => id != null && Number.isFinite(id));
+}
+
+async function pickRandomHarvardId(exclude: Set<string>): Promise<string | null> {
+  const key = harvardApiKey();
+  if (!key) return null;
+  for (let attempt = 0; attempt < 18; attempt++) {
+    const kw = KEYWORDS[Math.floor(Math.random() * KEYWORDS.length)]!;
+    const ids = await harvardSearchIds(kw);
+    if (ids.length === 0) continue;
+    const candidates = [...ids];
+    shuffleInPlace(candidates);
+    for (const id of candidates) {
+      const sid = String(id);
+      if (!exclude.has(`harvard:${sid}`)) return sid;
+    }
+  }
+  return null;
+}
+
+export function isHarvardConfigured(): boolean {
+  return harvardApiKey() != null;
+}
+
+export async function getRandomHarvardSlots(
+  count: number,
+  excludeIds: Iterable<string>,
+): Promise<WallSlotPayload[]> {
+  if (!isHarvardConfigured()) return [];
+  const exclude = new Set(excludeIds);
+  const out: WallSlotPayload[] = [];
+  let guard = 0;
+
+  while (out.length < count && guard < count * 100) {
+    guard++;
+    const id = await pickRandomHarvardId(exclude);
+    if (!id) break;
+    const slot = await fetchHarvardObject(id);
+    if (!slot) {
+      exclude.add(`harvard:${id}`);
+      continue;
+    }
+    exclude.add(`harvard:${slot.objectId}`);
+    out.push(slot);
+  }
+
+  return out;
+}
