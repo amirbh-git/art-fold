@@ -199,6 +199,45 @@ The swipe deck can include works from **Harvard Art Museums** when you add a (fr
 
 ---
 
+## Part 10: Private GitHub + Vercel (deploy and share)
+
+This app is ready to deploy. The repo already includes **`vercel.json`**, which runs **`prisma migrate deploy`** during the Vercel build so your production database stays in sync with the schema.
+
+### A. Create a private GitHub repository
+
+1. On GitHub, click **New repository**.
+2. Name it (for example `digital-exhibit`), choose **Private**, and **do not** add a README (this project already has files).
+3. After it is created, GitHub shows commands to push an existing repo. From your Mac, in Terminal:
+
+```bash
+cd /Users/amir/Documents/cursor_projects/digital-exhibit
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+git push -u origin main
+```
+
+Replace `YOUR_USERNAME` and `YOUR_REPO` with yours. Use the HTTPS URL GitHub shows (or SSH if you use keys).
+
+### B. Deploy on Vercel
+
+1. Go to **https://vercel.com** and sign in (GitHub login is fine).
+2. **Add New** → **Project** → **Import** your private `digital-exhibit` repository. Authorize Vercel to access **private** GitHub repos if asked.
+3. **Environment variables** (Project → Settings → Environment Variables). Add at least:
+
+   | Name | Value | Environments |
+   |------|--------|--------------|
+   | `DATABASE_URL` | Your **production** Postgres URL (e.g. from Neon) | Production, Preview (optional) |
+   | `NEXT_PUBLIC_APP_URL` | Your live URL, e.g. `https://your-project.vercel.app` or your custom domain | Production |
+
+   Optional: `HARVARD_ART_API_KEY` if you use Harvard in the card mix.
+
+4. Click **Deploy**. The first build should run migrations and then build Next.js.
+
+5. After deploy, open the site URL Vercel gives you. Set **`NEXT_PUBLIC_APP_URL`** to that exact URL (including `https://`) and redeploy once so share links and Open Graph use the right domain.
+
+**Tip:** Use a **separate Neon database** (or separate branch) for Preview deployments if you do not want PR previews to write to production data. For a solo project, Production-only env vars are often enough.
+
+---
+
 ## Quick reference (all commands in order)
 
 Run these in Terminal, one after another, from the `digital-exhibit` folder:
