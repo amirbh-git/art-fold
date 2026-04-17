@@ -186,7 +186,7 @@ For local testing on your Mac only, you can skip this.
 
 ## Part 9 (optional): Harvard Art Museums in the card mix
 
-The swipe deck can include works from **Harvard Art Museums** when you add a (free) API key. Without it, the app still uses The Met, the Art Institute of Chicago, and the Cleveland Museum of Art.
+The swipe deck can include works from **Harvard Art Museums** when you add a (free) API key. Without it, the app still uses the Art Institute of Chicago and the Cleveland Museum of Art.
 
 1. Request a key from **https://harvardartmuseums.org/collections/api** (Harvard’s signup is free; usage is subject to their terms).
 2. In your `.env` file, add:
@@ -196,6 +196,14 @@ The swipe deck can include works from **Harvard Art Museums** when you add a (fr
    ```
 
 3. Restart `npm run dev` so the server picks up the new variable.
+
+To print **approximate artwork pool sizes** from each museum API (helpful to sanity-check variety), run:
+
+```bash
+npm run art-pools
+```
+
+Add `HARVARD_ART_API_KEY` to the environment for that command if you want Harvard included in the output.
 
 ---
 
@@ -233,6 +241,14 @@ Replace `YOUR_USERNAME` and `YOUR_REPO` with yours. Use the HTTPS URL GitHub sho
 4. Click **Deploy**. The first build should run migrations and then build Next.js.
 
 5. After deploy, open the site URL Vercel gives you. Set **`NEXT_PUBLIC_APP_URL`** to that exact URL (including `https://`) and redeploy once so share links and Open Graph use the right domain.
+
+### Custom domain (e.g. artmat.ch)
+
+After you add a domain in Vercel (**Project → Settings → Domains**), set **`NEXT_PUBLIC_APP_URL`** to your public URL, for example `https://artmat.ch` (no trailing slash), and redeploy. Share links and metadata use this value in production.
+
+### Harvard API key hygiene
+
+If you ever paste or commit a Harvard key by mistake, **rotate it** in Harvard’s developer portal and update **`HARVARD_ART_API_KEY`** in Vercel only. Never commit real keys to Git.
 
 **Tip:** Use a **separate Neon database** (or separate branch) for Preview deployments if you do not want PR previews to write to production data. For a solo project, Production-only env vars are often enough.
 

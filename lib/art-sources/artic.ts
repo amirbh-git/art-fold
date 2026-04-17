@@ -1,26 +1,8 @@
+import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import { SEARCH_TERMS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
 const AIC_BASE = "https://api.artic.edu/api/v1";
-
-const SEARCH_TERMS = [
-  "portrait",
-  "landscape",
-  "oil",
-  "watercolor",
-  "still life",
-  "figure",
-  "interior",
-  "garden",
-  "venice",
-  "paris",
-  "dawn",
-  "evening",
-  "mother",
-  "child",
-  "saint",
-  "allegory",
-  "mythology",
-];
 
 type ArtworkSearchHit = {
   id?: number;
@@ -40,6 +22,7 @@ type ArtworkDetail = ArtworkSearchHit & {
 type SearchResponse = {
   data?: ArtworkSearchHit[];
   config?: { iiif_url?: string };
+  pagination?: { total_pages?: number; current_page?: number };
 };
 
 type ArtworkResponse = {
@@ -99,6 +82,43 @@ export async function fetchArticArtwork(
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Paginated AIC search IDs for the art pool (`npm run art-pool:build`). */
+export async function collectArticObjectIdsForPool(
+  maxPagesPerTerm = 12,
+): Promise<number[]> {
+  const all = new Set<number>();
+  const fields =
+    "id,title,artist_display,image_id,date_display,medium_display";
+  for (const q of SEARCH_TERMS) {
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const params = new URLSearchParams();
+      params.set("q", q);
+      params.set("fields", fields);
+      params.set("limit", "100");
+      params.set("page", String(page));
+      const res = await fetch(`${AIC_BASE}/artworks/search?${params}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) break;
+      const json = (await res.json()) as SearchResponse;
+      totalPages = json.pagination?.total_pages ?? 1;
+      for (const row of json.data ?? []) {
+        if (row.id != null && row.image_id) all.add(row.id);
+      }
+      page++;
+      await sleep(45);
+    } while (page <= totalPages && page <= maxPagesPerTerm);
+    await sleep(45);
+  }
+  return [...all];
+}
+
 async function articSearchIds(q: string): Promise<number[]> {
   const fields =
     "id,title,artist_display,image_id,date_display,medium_display";
@@ -106,6 +126,8 @@ async function articSearchIds(q: string): Promise<number[]> {
   params.set("q", q);
   params.set("fields", fields);
   params.set("limit", "80");
+  /** Widen pool: AIC search supports pagination (large total result sets). */
+  params.set("page", String(Math.floor(Math.random() * 40) + 1));
   const res = await fetch(`${AIC_BASE}/artworks/search?${params}`, {
     cache: "no-store",
   });
@@ -139,10 +161,16 @@ export async function getRandomArticSlots(
   const exclude = new Set(excludeIds);
   const out: WallSlotPayload[] = [];
   let guard = 0;
+  const usePool = (await artPoolCount("artic")) > 0;
 
   while (out.length < count && guard < count * 100) {
     guard++;
-    const id = await pickRandomArticId(exclude);
+    let id: string | null = null;
+    if (usePool) {
+      const fromPool = await pickRandomObjectIdsFromPool("artic", exclude, 1);
+      if (fromPool.length > 0) id = fromPool[0]!;
+    }
+    if (id == null) id = await pickRandomArticId(exclude);
     if (!id) break;
     const slot = await fetchArticArtwork(id);
     if (!slot) {
@@ -155,3 +183,5 @@ export async function getRandomArticSlots(
 
   return out;
 }
+
+export { SEARCH_TERMS as ARTIC_SEARCH_TERMS } from "./search-keywords";

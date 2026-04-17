@@ -33,3 +33,14 @@ model ExhibitSlot {
 
   @@unique([exhibitId, position])
 }
+
+/** Eligible artwork IDs for swipe deck sampling (see `npm run art-pool:build`). */
+model ArtPoolEntry {
+  id        String   @id @default(cuid())
+  source    String
+  objectId  String
+  createdAt DateTime @default(now())
+
+  @@unique([source, objectId])
+  @@index([source])
+}

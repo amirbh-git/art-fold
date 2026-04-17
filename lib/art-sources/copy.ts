@@ -2,7 +2,7 @@ import type { ArtSourceId } from "./types";
 import { isArtSourceId } from "./types";
 
 export function normalizeArtSourceId(raw: string): ArtSourceId {
-  return isArtSourceId(raw) ? raw : "met";
+  return isArtSourceId(raw) ? raw : "artic";
 }
 
 /** Short link label for the museum collection page. */

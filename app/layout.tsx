@@ -3,7 +3,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Digital exhibit",
-  description: "Curate six works from The Met and share your exhibit.",
+  description:
+    "Curate six works from partner museums and share your exhibit.",
 };
 
 export default function RootLayout({

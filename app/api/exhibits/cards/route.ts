@@ -1,9 +1,4 @@
 import { NextResponse } from "next/server";
-import { ART_FILTERS_ENABLED } from "@/lib/feature-flags";
-import {
-  DEFAULT_MET_CARD_FILTERS,
-  parseMetCardFiltersFromSearchParams,
-} from "@/lib/met-filters";
 import { getRandomArtSlots } from "@/lib/art-sources/random-art";
 
 export const dynamic = "force-dynamic";
@@ -24,12 +19,8 @@ export async function GET(req: Request) {
       .filter(Boolean),
   );
 
-  const filters = ART_FILTERS_ENABLED
-    ? parseMetCardFiltersFromSearchParams(searchParams)
-    : DEFAULT_MET_CARD_FILTERS;
-
   try {
-    const cards = await getRandomArtSlots(count, excludeSet, filters);
+    const cards = await getRandomArtSlots(count, excludeSet);
     return NextResponse.json(
       { cards },
       {

@@ -142,7 +142,7 @@ export function MatchFiltersModal({ open, onClose, applied, onApply }: Props) {
           <p className="mb-4 text-xs text-neutral-500">
             Turn options off to narrow what you see. All on = the full mix (same
             as when you started). Culture/region uses artist nationality and
-            artwork data (not only Met search geography).
+            artwork data (not only search-index geography).
           </p>
 
           <section className="mb-5">

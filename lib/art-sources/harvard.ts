@@ -1,3 +1,5 @@
+import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import { SEARCH_TERMS as KEYWORDS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
 const HARVARD_BASE = "https://api.harvardartmuseums.org";
@@ -31,6 +33,7 @@ type HarvardObject = {
 
 type HarvardListResponse = {
   records?: HarvardObject[];
+  info?: { pages?: number; totalrecords?: number };
 };
 
 function recordNumericId(r: HarvardObject): number | null {
@@ -102,27 +105,50 @@ export async function fetchHarvardObject(
   };
 }
 
-const KEYWORDS = [
-  "portrait",
-  "landscape",
-  "oil",
-  "watercolor",
-  "figure",
-  "drawing",
-  "venice",
-  "paris",
-  "still life",
-  "allegory",
-  "mythology",
-  "interior",
-  "garden",
-];
-
 function shuffleInPlace<T>(arr: T[]): void {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Paginated Harvard object IDs for the art pool (`npm run art-pool:build`). Requires `HARVARD_ART_API_KEY`. */
+export async function collectHarvardObjectIdsForPool(
+  maxPagesPerKeyword = 15,
+): Promise<number[]> {
+  const key = harvardApiKey();
+  if (!key) return [];
+  const all = new Set<number>();
+  for (const keyword of KEYWORDS) {
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const params = new URLSearchParams();
+      params.set("apikey", key);
+      params.set("keyword", keyword);
+      params.set("hasimage", "1");
+      params.set("size", "100");
+      params.set("page", String(page));
+      const res = await fetch(`${HARVARD_BASE}/object?${params}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) break;
+      const json = (await res.json()) as HarvardListResponse;
+      totalPages = json.info?.pages ?? 1;
+      for (const r of json.records ?? []) {
+        const id = recordNumericId(r);
+        if (id != null) all.add(id);
+      }
+      page++;
+      await sleep(60);
+    } while (page <= totalPages && page <= maxPagesPerKeyword);
+    await sleep(60);
+  }
+  return [...all];
 }
 
 async function harvardSearchIds(keyword: string): Promise<number[]> {
@@ -133,7 +159,7 @@ async function harvardSearchIds(keyword: string): Promise<number[]> {
   params.set("keyword", keyword);
   params.set("hasimage", "1");
   params.set("size", "80");
-  params.set("page", String(Math.floor(Math.random() * 40) + 1));
+  params.set("page", String(Math.floor(Math.random() * 120) + 1));
   const res = await fetch(`${HARVARD_BASE}/object?${params}`, {
     cache: "no-store",
   });
@@ -174,10 +200,16 @@ export async function getRandomHarvardSlots(
   const exclude = new Set(excludeIds);
   const out: WallSlotPayload[] = [];
   let guard = 0;
+  const usePool = (await artPoolCount("harvard")) > 0;
 
   while (out.length < count && guard < count * 100) {
     guard++;
-    const id = await pickRandomHarvardId(exclude);
+    let id: string | null = null;
+    if (usePool) {
+      const fromPool = await pickRandomObjectIdsFromPool("harvard", exclude, 1);
+      if (fromPool.length > 0) id = fromPool[0]!;
+    }
+    if (id == null) id = await pickRandomHarvardId(exclude);
     if (!id) break;
     const slot = await fetchHarvardObject(id);
     if (!slot) {
@@ -190,3 +222,5 @@ export async function getRandomHarvardSlots(
 
   return out;
 }
+
+export { SEARCH_TERMS as HARVARD_KEYWORDS } from "./search-keywords";

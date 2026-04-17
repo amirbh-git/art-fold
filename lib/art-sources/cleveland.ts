@@ -1,25 +1,8 @@
+import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import { SEARCH_TERMS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
 const CMA_BASE = "https://openaccess-api.clevelandart.org/api/artworks";
-
-const SEARCH_TERMS = [
-  "portrait",
-  "landscape",
-  "oil",
-  "watercolor",
-  "still life",
-  "figure",
-  "church",
-  "garden",
-  "interior",
-  "venice",
-  "mother",
-  "child",
-  "allegory",
-  "mythology",
-  "american",
-  "european",
-];
 
 type CmaImages = {
   web?: { url?: string };
@@ -39,6 +22,7 @@ type CmaArtwork = {
 
 type CmaListResponse = {
   data?: CmaArtwork[];
+  info?: { total?: number };
 };
 
 type CmaOneResponse = {
@@ -86,11 +70,59 @@ export async function fetchClevelandArtwork(
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Paginated Cleveland Open Access IDs for the art pool (`npm run art-pool:build`). */
+export async function collectClevelandObjectIdsForPool(
+  maxPagesPerQuery = 40,
+): Promise<number[]> {
+  const all = new Set<number>();
+  const limit = 100;
+  for (const q of SEARCH_TERMS) {
+    const probe = new URLSearchParams();
+    probe.set("q", q);
+    probe.set("has_image", "1");
+    probe.set("limit", "1");
+    const probeRes = await fetch(`${CMA_BASE}/?${probe}`, {
+      cache: "no-store",
+    });
+    if (!probeRes.ok) continue;
+    const probeJson = (await probeRes.json()) as CmaListResponse;
+    const total = probeJson.info?.total ?? 0;
+    let skip = 0;
+    let pages = 0;
+    while (skip < total && pages < maxPagesPerQuery) {
+      const params = new URLSearchParams();
+      params.set("q", q);
+      params.set("has_image", "1");
+      params.set("limit", String(limit));
+      params.set("skip", String(skip));
+      const res = await fetch(`${CMA_BASE}/?${params}`, { cache: "no-store" });
+      await sleep(50);
+      if (!res.ok) break;
+      const json = (await res.json()) as CmaListResponse;
+      const rows = json.data ?? [];
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        if (r.id != null && imageFromArtwork(r)) all.add(r.id);
+      }
+      skip += limit;
+      pages++;
+    }
+    await sleep(50);
+  }
+  return [...all];
+}
+
 async function clevelandSearchIds(q: string): Promise<number[]> {
   const params = new URLSearchParams();
   params.set("q", q);
   params.set("has_image", "1");
   params.set("limit", "80");
+  /** Skip into the result list so the same query does not always return the same page of IDs. */
+  params.set("skip", String(Math.floor(Math.random() * 400)));
   const res = await fetch(`${CMA_BASE}/?${params}`, { cache: "no-store" });
   if (!res.ok) return [];
   const json = (await res.json()) as CmaListResponse;
@@ -122,10 +154,16 @@ export async function getRandomClevelandSlots(
   const exclude = new Set(excludeIds);
   const out: WallSlotPayload[] = [];
   let guard = 0;
+  const usePool = (await artPoolCount("cleveland")) > 0;
 
   while (out.length < count && guard < count * 100) {
     guard++;
-    const id = await pickRandomClevelandId(exclude);
+    let id: string | null = null;
+    if (usePool) {
+      const fromPool = await pickRandomObjectIdsFromPool("cleveland", exclude, 1);
+      if (fromPool.length > 0) id = fromPool[0]!;
+    }
+    if (id == null) id = await pickRandomClevelandId(exclude);
     if (!id) break;
     const slot = await fetchClevelandArtwork(id);
     if (!slot) {
@@ -138,3 +176,5 @@ export async function getRandomClevelandSlots(
 
   return out;
 }
+
+export { SEARCH_TERMS as CLEVELAND_SEARCH_TERMS } from "./search-keywords";

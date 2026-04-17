@@ -12,19 +12,53 @@ import {
 } from "@/lib/met-filters";
 import { SLOT_COUNT } from "@/lib/wall-layout";
 import { GalleryWall } from "./GalleryWall";
-import { MetAttribution } from "./MetAttribution";
+import { PartnerMuseumsAttribution } from "./PartnerMuseumsAttribution";
 import { ArtCard } from "./ArtCard";
+import type { ArtCardHandle } from "./art-card-handle";
 import { ExhibitTray } from "./ExhibitTray";
 import { ArtDetailModal } from "./ArtDetailModal";
 import { MatchFiltersModal } from "./MatchFiltersModal";
+import { ShareRow } from "./ShareRow";
+import { ExhibitHowItWorksHint } from "./ExhibitHowItWorksHint";
 
 type Step = "swipe" | "theme" | "done";
 
 const THEME_MAX = 280;
 const NAME_MAX = 120;
-const BUFFER_LOW = 3;
-const FETCH_BATCH = 6;
-const BUFFER_CAP = 12;
+/**
+ * First paint: fetch this many cards, warm their images, show the first only when its image is ready.
+ * Remaining cards stay in buffer so swipes feel instant.
+ */
+const INITIAL_SWIPE_FETCH = 10;
+/** Refill when this many (or fewer) cards remain in the queue behind the current — stay ahead of the user. */
+const BUFFER_LOW = 7;
+const REFILL_BATCH = 8;
+const BUFFER_CAP = 14;
+
+function preloadImage(url: string | undefined): Promise<void> {
+  if (!url?.trim()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+    img.src = url.trim();
+  });
+}
+
+/** First card blocks until loaded; next cards warm in parallel for seamless handoff. */
+async function warmSwipeDeckImages(cards: WallSlotPayload[]): Promise<void> {
+  if (cards.length === 0) return;
+  await preloadImage(cards[0]?.imageUrl);
+  await Promise.all(cards.slice(1).map((c) => preloadImage(c.imageUrl)));
+}
+
+function prefetchBufferImages(buffer: WallSlotPayload[], max = 8): void {
+  for (const c of buffer.slice(0, max)) {
+    if (!c.imageUrl) continue;
+    const img = new Image();
+    img.src = c.imageUrl;
+  }
+}
 
 function origin(): string {
   if (typeof window === "undefined") return "";
@@ -119,13 +153,15 @@ export function CreateWizard() {
   const curatedRef = useRef(curated);
   curatedRef.current = curated;
 
+  const artCardRef = useRef<ArtCardHandle>(null);
+
   const refillBuffer = useCallback(async () => {
     if (fetchingRef.current) return;
     if (bufferRef.current.length >= BUFFER_CAP) return;
     fetchingRef.current = true;
     try {
       const { cards, error } = await fetchCards(
-        FETCH_BATCH,
+        REFILL_BATCH,
         seenRef.current,
         filtersRef.current,
       );
@@ -153,12 +189,13 @@ export function CreateWizard() {
     );
     try {
       const { cards, error } = await fetchCards(
-        FETCH_BATCH,
+        INITIAL_SWIPE_FETCH,
         exclude,
         filtersRef.current,
       );
       if (error) setCardsFetchError(error);
       if (cards.length > 0) {
+        await warmSwipeDeckImages(cards);
         const [first, ...rest] = cards;
         setCurrentCard(first!);
         setBuffer(rest);
@@ -187,10 +224,15 @@ export function CreateWizard() {
       setBuffer([]);
       setCurrentCard(null);
       try {
-        const { cards, error } = await fetchCards(FETCH_BATCH, exclude, next);
+        const { cards, error } = await fetchCards(
+          INITIAL_SWIPE_FETCH,
+          exclude,
+          next,
+        );
         if (error) setCardsFetchError(error);
         else setCardsFetchError(null);
         if (cards.length > 0) {
+          await warmSwipeDeckImages(cards);
           const [first, ...rest] = cards;
           setCurrentCard(first!);
           setBuffer(rest);
@@ -219,13 +261,15 @@ export function CreateWizard() {
       setCardsFetchError(null);
       try {
         const { cards, error } = await fetchCards(
-          FETCH_BATCH,
+          INITIAL_SWIPE_FETCH,
           new Set(),
           DEFAULT_MET_CARD_FILTERS,
         );
         if (cancelled) return;
         if (error) setCardsFetchError(error);
         if (cards.length > 0) {
+          await warmSwipeDeckImages(cards);
+          if (cancelled) return;
           const [first, ...rest] = cards;
           setCurrentCard(first!);
           setBuffer(rest);
@@ -289,6 +333,24 @@ export function CreateWizard() {
 
   const isFull = curated.length >= SLOT_COUNT;
 
+  /** Refill completes asynchronously; if the deck was emptied first, promote from buffer. */
+  useEffect(() => {
+    if (step !== "swipe") return;
+    if (loadingCards) return;
+    if (isFull) return;
+    if (currentCard != null) return;
+    if (buffer.length === 0) return;
+    const [first, ...rest] = buffer;
+    setCurrentCard(first);
+    setBuffer(rest);
+  }, [step, loadingCards, isFull, currentCard, buffer]);
+
+  /** Keep queued card images in the browser cache so the next swap does not flash. */
+  useEffect(() => {
+    if (step !== "swipe") return;
+    prefetchBufferImages(buffer);
+  }, [step, buffer]);
+
   const handleFinalize = useCallback(() => {
     if (curated.length < SLOT_COUNT) return;
     setStep("theme");
@@ -311,13 +373,24 @@ export function CreateWizard() {
           slots: curated,
         }),
       });
-      const data = (await res.json()) as {
+      const raw = await res.text();
+      let data: {
         id?: string;
         exhibitTitle?: string;
         theme?: string;
         curatorName?: string;
         error?: string;
       };
+      try {
+        data = JSON.parse(raw) as typeof data;
+      } catch {
+        const snippet = raw.replace(/\s+/g, " ").trim().slice(0, 160);
+        throw new Error(
+          !res.ok
+            ? snippet || `Save failed (${res.status}).`
+            : "Invalid response from server.",
+        );
+      }
       if (!res.ok) throw new Error(data.error ?? "Save failed");
       if (
         !data.id ||
@@ -344,7 +417,7 @@ export function CreateWizard() {
   const shareUrl = published ? `${origin()}/e/${published.id}` : "";
 
   return (
-    <main className="min-h-dvh-safe overflow-auto bg-[var(--canvas)] px-4 pb-safe pt-6">
+    <main className="min-h-dvh-safe touch-manipulation overflow-auto bg-[var(--canvas)] px-4 pb-safe pt-6">
       <div className="mx-auto flex max-w-sm flex-col">
         <header className="mb-4 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-neutral-900">
@@ -397,6 +470,7 @@ export function CreateWizard() {
 
               {currentCard && !isFull && (
                 <ArtCard
+                  ref={artCardRef}
                   key={`${currentCard.source}:${currentCard.objectId}`}
                   card={currentCard}
                   onPass={handlePass}
@@ -408,6 +482,7 @@ export function CreateWizard() {
               {isFull && !currentCard && null}
               {isFull && currentCard && (
                 <ArtCard
+                  ref={artCardRef}
                   key={`${currentCard.source}:${currentCard.objectId}`}
                   card={currentCard}
                   onPass={handlePass}
@@ -423,7 +498,7 @@ export function CreateWizard() {
               >
                 <button
                   type="button"
-                  onClick={handlePass}
+                  onClick={() => artCardRef.current?.playPass()}
                   className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-neutral-400/70 bg-white text-2xl font-bold text-neutral-500 shadow-sm transition-colors hover:border-red-400 hover:text-red-500"
                   aria-label="Pass"
                 >
@@ -444,7 +519,7 @@ export function CreateWizard() {
                 )}
                 <button
                   type="button"
-                  onClick={handleCurate}
+                  onClick={() => artCardRef.current?.playCurate()}
                   className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-neutral-400/70 bg-white text-2xl font-bold text-green-600 shadow-sm transition-colors hover:border-green-500 hover:text-green-700"
                   aria-label="Curate"
                 >
@@ -467,9 +542,22 @@ export function CreateWizard() {
 
             <ExhibitTray curated={curated} onRemove={handleRemoveFromTray} />
 
+            <ExhibitHowItWorksHint />
+
             <div className="mt-1">
-              <MetAttribution />
+              <PartnerMuseumsAttribution />
             </div>
+            <p className="mt-3 text-center text-[11px] text-neutral-500">
+              Designed by{" "}
+              <a
+                href="https://www.amirbh.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-neutral-600 underline decoration-neutral-400 underline-offset-2 hover:text-neutral-900"
+              >
+                Amir Ben-Harosh
+              </a>
+            </p>
           </section>
         )}
 
@@ -482,44 +570,54 @@ export function CreateWizard() {
               showLockChrome={false}
               variant="theme"
             />
-            <div className="space-y-4">
+            <form
+              className="space-y-4"
+              autoComplete="off"
+              onSubmit={(e) => e.preventDefault()}
+            >
               <div className="space-y-1.5">
                 <label
                   htmlFor="exhibit-name"
-                  className="block text-left text-xs font-medium text-neutral-600"
+                  className="block text-left text-sm font-medium text-neutral-600"
                 >
-                  Name of exhibit
+                  Exhibit Name
                 </label>
                 <input
                   id="exhibit-name"
+                  name="art-match-exhibit-title"
                   type="text"
                   maxLength={NAME_MAX}
                   value={exhibitTitleInput}
                   onChange={(e) => setExhibitTitleInput(e.target.value)}
                   placeholder="Optional"
-                  className="w-full rounded-lg border border-neutral-400/50 bg-white px-3 py-2 text-sm shadow-sm outline-none ring-0 placeholder:text-neutral-400 focus:border-neutral-500"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-form-type="other"
+                  className="w-full rounded-lg border border-neutral-400/50 bg-white px-3 py-2 text-base shadow-sm outline-none ring-0 placeholder:text-neutral-400 focus:border-neutral-500"
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label
                   htmlFor="theme-desc"
-                  className="block text-left text-xs font-medium text-neutral-600"
+                  className="block text-left text-sm font-medium text-neutral-600"
                 >
-                  Description
+                  Describe the theme of your exhibit
                 </label>
-                <p className="text-sm text-neutral-500">
-                  Describe the theme of your exhibit.
-                </p>
                 <div className="rounded-lg border border-neutral-400/50 bg-white p-3 shadow-sm">
                   <textarea
                     id="theme-desc"
+                    name="art-match-theme-desc"
                     rows={3}
                     maxLength={THEME_MAX}
                     value={themeDescription}
                     onChange={(e) => setThemeDescription(e.target.value)}
                     placeholder="Optional"
-                    className="w-full resize-none border-0 bg-transparent text-sm outline-none ring-0 placeholder:text-neutral-400"
+                    autoComplete="off"
+                    className="w-full resize-none border-0 bg-transparent text-base outline-none ring-0 placeholder:text-neutral-400"
                   />
                   <div className="mt-1 text-right text-xs text-neutral-400">
                     {themeDescription.length}/{THEME_MAX}
@@ -530,18 +628,22 @@ export function CreateWizard() {
               <div className="space-y-1.5">
                 <label
                   htmlFor="curator-name"
-                  className="block text-left text-xs font-medium text-neutral-600"
+                  className="block text-left text-sm font-medium text-neutral-600"
                 >
                   Your name
                 </label>
                 <input
                   id="curator-name"
+                  name="art-match-curator"
                   type="text"
                   maxLength={NAME_MAX}
                   value={curatorNameInput}
                   onChange={(e) => setCuratorNameInput(e.target.value)}
                   placeholder="Optional"
-                  className="w-full rounded-lg border border-neutral-400/50 bg-white px-3 py-2 text-sm shadow-sm outline-none ring-0 placeholder:text-neutral-400 focus:border-neutral-500"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className="w-full rounded-lg border border-neutral-400/50 bg-white px-3 py-2 text-base shadow-sm outline-none ring-0 placeholder:text-neutral-400 focus:border-neutral-500"
                 />
               </div>
 
@@ -567,16 +669,37 @@ export function CreateWizard() {
                   Publish
                 </button>
               </div>
-            </div>
+            </form>
           </section>
         )}
 
         {/* ─── DONE STEP ─── */}
         {step === "done" && published && (
           <section className="mx-auto max-w-lg space-y-6">
-            <h2 className="text-center text-xl font-semibold">
-              Your exhibit is live
+            <h2 className="text-center text-xl font-semibold tracking-tight text-neutral-900">
+              Your exhibit is live!
             </h2>
+            <div
+              className="border-t border-neutral-300/40"
+              aria-hidden
+            />
+
+            <div className="space-y-3 text-center">
+              {published.exhibitTitle.trim() ? (
+                <p className="text-xl font-semibold tracking-tight text-neutral-900">
+                  {published.exhibitTitle.trim()}
+                </p>
+              ) : null}
+              {published.theme.trim() ? (
+                <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-neutral-800">
+                  {published.theme.trim()}
+                </p>
+              ) : null}
+              <p className="text-sm text-neutral-600">
+                by{" "}
+                {published.curatorName.trim() || "Anonymous"}
+              </p>
+            </div>
 
             <GalleryWall
               slots={curated}
@@ -585,19 +708,7 @@ export function CreateWizard() {
               variant="theme"
             />
 
-            <div className="space-y-1 text-center">
-              <p className="text-lg font-semibold text-neutral-900">
-                {published.exhibitTitle}
-              </p>
-              {published.theme.trim() ? (
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-700">
-                  {published.theme}
-                </p>
-              ) : null}
-              <p className="text-sm text-neutral-600">
-                by {published.curatorName}
-              </p>
-            </div>
+            <div className="border-t border-neutral-300/60" aria-hidden />
 
             <p className="text-center text-sm text-neutral-600">Share this link:</p>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-center">
@@ -612,6 +723,19 @@ export function CreateWizard() {
                 Copy link
               </button>
             </div>
+
+            <ShareRow
+              url={shareUrl}
+              exhibitTitle={published.exhibitTitle}
+              blurb={
+                published.theme.trim().length > 0
+                  ? published.theme.length > 120
+                    ? `${published.theme.slice(0, 117)}…`
+                    : published.theme
+                  : undefined
+              }
+            />
+
             <div className="text-center">
               <a
                 href={shareUrl}
@@ -624,6 +748,7 @@ export function CreateWizard() {
               To curate a new exhibit,{" "}
               <Link
                 href="/"
+                prefetch={false}
                 className="font-medium text-neutral-900 underline underline-offset-2"
               >
                 go here

@@ -1,10 +1,7 @@
 /**
- * Art Match: gear button, filter modal, `/api/exhibits/cards` query params, and all
- * narrowing in `lib/art-sources/met.ts` (including region post-filter + search boost).
+ * Art Match: gear button, filter modal, and client fetch query params when enabled.
  *
- * Set to `true` to turn filtering back on. Used by:
+ * Set to `true` to turn filtering UI and URL params back on. Used by:
  * - `components/CreateWizard.tsx` (UI + client fetch)
- * - `app/api/exhibits/cards/route.ts`
- * - `lib/art-sources/met.ts` (`effectiveCardFilters`)
  */
 export const ART_FILTERS_ENABLED = false;

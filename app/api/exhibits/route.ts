@@ -93,12 +93,12 @@ export async function POST(req: Request) {
 
   const ordered = slots as WallSlotPayload[];
 
-  const count = await prisma.exhibit.count();
-  const exhibitTitle =
-    rawExhibitTitle || `Untitled Exhibit #${count + 1}`;
-  const curatorName = rawCuratorName || "Anonymous";
-
   try {
+    const count = await prisma.exhibit.count();
+    const exhibitTitle =
+      rawExhibitTitle || `Untitled Exhibit #${count + 1}`;
+    const curatorName = rawCuratorName || "Anonymous";
+
     const exhibit = await prisma.exhibit.create({
       data: {
         theme: rawTheme,

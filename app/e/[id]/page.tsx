@@ -4,7 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { GalleryWall } from "@/components/GalleryWall";
-import { MetAttribution } from "@/components/MetAttribution";
+import { PartnerMuseumsAttribution } from "@/components/PartnerMuseumsAttribution";
 import { collectionLinkText, normalizeArtSourceId } from "@/lib/art-sources/copy";
 import { SLOT_COUNT } from "@/lib/wall-layout";
 
@@ -149,7 +149,7 @@ export default async function ExhibitPage({ params }: Props) {
       </ul>
 
       <div className="mt-10 space-y-6">
-        <MetAttribution />
+        <PartnerMuseumsAttribution />
         <p className="text-center text-xs text-neutral-400">
           Created {exhibit.createdAt.toLocaleDateString(undefined, {
             year: "numeric",
@@ -160,6 +160,7 @@ export default async function ExhibitPage({ params }: Props) {
         <p className="text-center">
           <Link
             href="/"
+            prefetch={false}
             className="text-sm font-medium text-neutral-900 underline underline-offset-2"
           >
             Curate your own exhibit

@@ -9,6 +9,7 @@ export default function ExhibitNotFound() {
       </p>
       <Link
         href="/"
+        prefetch={false}
         className="mt-6 inline-block text-sm font-medium text-neutral-900 underline underline-offset-2"
       >
         Start a new exhibit
