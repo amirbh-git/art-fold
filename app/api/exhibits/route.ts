@@ -46,6 +46,7 @@ export async function POST(req: Request) {
     theme?: unknown;
     exhibitTitle?: unknown;
     curatorName?: unknown;
+    featureOnHomepage?: unknown;
     slots?: unknown;
   };
   try {
@@ -59,6 +60,10 @@ export async function POST(req: Request) {
     typeof body.exhibitTitle === "string" ? body.exhibitTitle.trim() : "";
   const rawCuratorName =
     typeof body.curatorName === "string" ? body.curatorName.trim() : "";
+  const featureOnHomepage =
+    typeof body.featureOnHomepage === "boolean"
+      ? body.featureOnHomepage
+      : true;
 
   if (rawTheme.length > THEME_MAX) {
     return NextResponse.json(
@@ -104,6 +109,7 @@ export async function POST(req: Request) {
         theme: rawTheme,
         exhibitTitle,
         curatorName,
+        featureOnHomepage,
         slots: {
           create: ordered.map((s, i) => ({
             position: i + 1,

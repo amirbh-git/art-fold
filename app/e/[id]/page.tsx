@@ -6,6 +6,7 @@ import { JsonLd } from "@/components/JsonLd";
 import { AboutContent } from "@/components/info-content/AboutContent";
 import { MuseumSourcesContent } from "@/components/info-content/MuseumSourcesContent";
 import { PublicExhibitBody } from "@/components/PublicExhibitBody";
+import { displayExhibitTitle } from "@/lib/exhibit-display";
 import { prisma } from "@/lib/prisma";
 import { normalizeArtSourceId } from "@/lib/art-sources/copy";
 import { SITE_NAME, absoluteUrl } from "@/lib/site";
@@ -13,12 +14,6 @@ import { exhibitGraphJsonLd } from "@/lib/schema-org";
 import { SLOT_COUNT } from "@/lib/wall-layout";
 
 type Props = { params: Promise<{ id: string }> };
-
-function displayExhibitTitle(exhibit: { exhibitTitle: string }): string {
-  const t = exhibit.exhibitTitle.trim();
-  if (t) return t;
-  return SITE_NAME;
-}
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
@@ -127,15 +122,22 @@ export default async function ExhibitPage({ params }: Props) {
             day: "numeric",
           })}
         </p>
-        <p className="text-center">
+        <div className="flex flex-col items-center gap-2 text-center">
           <Link
             href="/"
             prefetch={false}
             className="text-sm font-medium text-neutral-900 underline underline-offset-2"
           >
-            Curate your own exhibit
+            Curate your own exhibit on Art Match
           </Link>
-        </p>
+          <Link
+            href="/exhibits"
+            prefetch={false}
+            className="text-sm font-medium text-neutral-900 underline underline-offset-2"
+          >
+            Browse all Exhibits
+          </Link>
+        </div>
       </div>
     </main>
   );

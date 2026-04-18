@@ -10,15 +10,19 @@ import {
   type MetCardFilters,
   appendMetCardFilterParams,
 } from "@/lib/met-filters";
+import { copyTextToClipboard } from "@/lib/copy-to-clipboard";
 import { SLOT_COUNT } from "@/lib/wall-layout";
 import { GalleryWall } from "./GalleryWall";
 import { ArtCard, ART_CARD_TOTAL_HEIGHT_CLASS } from "./ArtCard";
 import type { ArtCardHandle } from "./art-card-handle";
+import type { ExhibitPreviewPayload } from "@/lib/exhibit-preview-payload";
+import { ExhibitHowItWorksHint } from "./ExhibitHowItWorksHint";
 import { ExhibitTray } from "./ExhibitTray";
+import { InfoModal } from "./InfoModal";
+import { RecentExhibitsHome } from "./RecentExhibitsHome";
 import { ArtDetailModal } from "./ArtDetailModal";
 import { MatchFiltersModal } from "./MatchFiltersModal";
 import { ShareRow } from "./ShareRow";
-import { ExhibitHowItWorksHint } from "./ExhibitHowItWorksHint";
 
 type Step = "swipe" | "theme" | "done";
 
@@ -120,7 +124,13 @@ type PublishedMeta = {
   curatorName: string;
 };
 
-export function CreateWizard() {
+type CreateWizardProps = {
+  recentExhibits?: ExhibitPreviewPayload[];
+};
+
+export function CreateWizard({
+  recentExhibits = [],
+}: CreateWizardProps) {
   const [step, setStep] = useState<Step>("swipe");
   const [buffer, setBuffer] = useState<WallSlotPayload[]>([]);
   const [currentCard, setCurrentCard] = useState<WallSlotPayload | null>(null);
@@ -131,6 +141,7 @@ export function CreateWizard() {
   const [exhibitTitleInput, setExhibitTitleInput] = useState("");
   const [themeDescription, setThemeDescription] = useState("");
   const [curatorNameInput, setCuratorNameInput] = useState("");
+  const [featureOnHomepage, setFeatureOnHomepage] = useState(true);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [published, setPublished] = useState<PublishedMeta | null>(null);
   const [busy, setBusy] = useState(false);
@@ -138,7 +149,12 @@ export function CreateWizard() {
     DEFAULT_MET_CARD_FILTERS,
   );
   const [filterModalOpen, setFilterModalOpen] = useState(false);
+  const [featureHelpOpen, setFeatureHelpOpen] = useState(false);
   const [cardsFetchError, setCardsFetchError] = useState<string | null>(null);
+  const [linkCopyFeedback, setLinkCopyFeedback] = useState<
+    "idle" | "copied" | "error"
+  >("idle");
+  const linkCopyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchingRef = useRef(false);
   const seenRef = useRef(seenIds);
@@ -370,6 +386,7 @@ export function CreateWizard() {
           exhibitTitle: exhibitTitleInput,
           theme: themeDescription,
           curatorName: curatorNameInput,
+          featureOnHomepage,
           slots: curated,
         }),
       });
@@ -412,9 +429,53 @@ export function CreateWizard() {
     } finally {
       setBusy(false);
     }
-  }, [curated, exhibitTitleInput, themeDescription, curatorNameInput]);
+  }, [
+    curated,
+    exhibitTitleInput,
+    themeDescription,
+    curatorNameInput,
+    featureOnHomepage,
+  ]);
 
   const shareUrl = published ? `${origin()}/e/${published.id}` : "";
+
+  const handleCopyShareLink = useCallback(async () => {
+    if (!shareUrl) return;
+    if (linkCopyResetRef.current) {
+      clearTimeout(linkCopyResetRef.current);
+      linkCopyResetRef.current = null;
+    }
+    const ok = await copyTextToClipboard(shareUrl);
+    if (ok) {
+      setLinkCopyFeedback("copied");
+      linkCopyResetRef.current = setTimeout(() => {
+        setLinkCopyFeedback("idle");
+        linkCopyResetRef.current = null;
+      }, 2500);
+    } else {
+      setLinkCopyFeedback("error");
+      linkCopyResetRef.current = setTimeout(() => {
+        setLinkCopyFeedback("idle");
+        linkCopyResetRef.current = null;
+      }, 4000);
+    }
+  }, [shareUrl]);
+
+  useEffect(() => {
+    if (step !== "done") {
+      setLinkCopyFeedback("idle");
+      if (linkCopyResetRef.current) {
+        clearTimeout(linkCopyResetRef.current);
+        linkCopyResetRef.current = null;
+      }
+    }
+  }, [step]);
+
+  useEffect(() => {
+    return () => {
+      if (linkCopyResetRef.current) clearTimeout(linkCopyResetRef.current);
+    };
+  }, []);
 
   return (
     <>
@@ -544,7 +605,21 @@ export function CreateWizard() {
                 onRemove={handleRemoveFromTray}
                 onOpenDetail={setDetailCard}
               />
+            </div>
+
+            <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-6">
               <ExhibitHowItWorksHint />
+              <RecentExhibitsHome exhibits={recentExhibits} />
+            </div>
+
+            <div className="mx-auto mt-6 max-w-sm pb-2 text-center">
+              <Link
+                href="/exhibits"
+                prefetch={false}
+                className="text-sm font-medium text-neutral-900 underline underline-offset-2"
+              >
+                Browse all Exhibits
+              </Link>
             </div>
           </section>
         )}
@@ -635,6 +710,33 @@ export function CreateWizard() {
                 />
               </div>
 
+              <div className="flex items-start gap-2 rounded-lg border border-neutral-400/50 bg-white px-3 py-2.5 shadow-sm">
+                <input
+                  id="feature-homepage"
+                  type="checkbox"
+                  checked={featureOnHomepage}
+                  onChange={(e) => setFeatureOnHomepage(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-400 text-neutral-900 focus:ring-neutral-500"
+                />
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <label
+                    htmlFor="feature-homepage"
+                    className="text-left text-sm text-neutral-700"
+                  >
+                    Feature my exhibit
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFeatureHelpOpen(true)}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-neutral-400/70 bg-white text-xs font-semibold text-neutral-600 shadow-sm hover:border-neutral-600 hover:text-neutral-900"
+                    aria-label="What does Feature my exhibit mean?"
+                    title="What does this mean?"
+                  >
+                    ?
+                  </button>
+                </div>
+              </div>
+
               {publishError && (
                 <p className="text-center text-sm text-red-700">
                   {publishError}
@@ -703,13 +805,38 @@ export function CreateWizard() {
               <code className="break-all rounded-lg border border-neutral-300/80 bg-white px-3 py-2 text-left text-xs shadow-sm">
                 {shareUrl}
               </code>
-              <button
-                type="button"
-                className="rounded-lg border border-neutral-400/70 bg-white px-4 py-2 text-sm font-medium text-neutral-700 shadow-sm hover:bg-neutral-50"
-                onClick={() => void navigator.clipboard.writeText(shareUrl)}
-              >
-                Copy link
-              </button>
+              <div className="flex flex-col items-center gap-1.5 sm:items-stretch">
+                <button
+                  type="button"
+                  className={
+                    linkCopyFeedback === "copied"
+                      ? "rounded-lg border-2 border-green-600 bg-green-50 px-4 py-2 text-sm font-semibold text-green-900 shadow-sm transition-colors"
+                      : "rounded-lg border border-neutral-400/70 bg-white px-4 py-2 text-sm font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50"
+                  }
+                  onClick={() => void handleCopyShareLink()}
+                >
+                  {linkCopyFeedback === "copied" ? "Copied!" : "Copy link"}
+                </button>
+                {(linkCopyFeedback === "copied" ||
+                  linkCopyFeedback === "error") && (
+                  <p
+                    className="text-center text-xs leading-snug"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {linkCopyFeedback === "copied" ? (
+                      <span className="font-medium text-green-800">
+                        Copied to clipboard
+                      </span>
+                    ) : (
+                      <span className="text-amber-950">
+                        Couldn&apos;t copy automatically. Tap the URL above,
+                        select all, then copy.
+                      </span>
+                    )}
+                  </p>
+                )}
+              </div>
             </div>
 
             <ShareRow
@@ -761,6 +888,33 @@ export function CreateWizard() {
           onApply={(next) => void reloadCardsAfterFilterChange(next)}
         />
       )}
+
+      <InfoModal
+        open={featureHelpOpen}
+        onClose={() => setFeatureHelpOpen(false)}
+        title="Feature my exhibit"
+        fullPageHref="/"
+        showFullPageLink={false}
+      >
+        <div className="space-y-3 pr-2 pt-0.5">
+          <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
+            Feature my exhibit
+          </h2>
+          <p className="text-[15px] leading-relaxed text-neutral-800">
+            When this is on, your exhibit can appear in{" "}
+            <strong>Recent exhibits</strong> on the home page and on the{" "}
+            <Link
+              href="/exhibits"
+              prefetch={false}
+              className="font-medium text-neutral-900 underline underline-offset-2"
+            >
+              All exhibits
+            </Link>{" "}
+            page. If you turn it off, your exhibit is still published—only people
+            with the direct link can open it; it won&apos;t be listed on the site.
+          </p>
+        </div>
+      </InfoModal>
     </>
   );
 }

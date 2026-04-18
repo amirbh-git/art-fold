@@ -9,6 +9,8 @@ type Props = {
   children: React.ReactNode;
   /** Canonical URL for crawlers; opens in a new tab so the home session stays intact. */
   fullPageHref: string;
+  /** When false, hides the “Open full page” link (e.g. short help popovers). Default true. */
+  showFullPageLink?: boolean;
 };
 
 export function InfoModal({
@@ -17,6 +19,7 @@ export function InfoModal({
   title,
   children,
   fullPageHref,
+  showFullPageLink = true,
 }: Props) {
   useEffect(() => {
     if (!open) return;
@@ -53,17 +56,19 @@ export function InfoModal({
         <div className="max-h-[min(70vh,560px)] overflow-y-auto pr-1 pt-1">
           {children}
         </div>
-        <p className="mt-4 border-t border-neutral-200 pt-3 text-center text-xs text-neutral-500">
-          <a
-            href={fullPageHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-neutral-700 underline underline-offset-2 hover:text-neutral-900"
-          >
-            Open full page
-          </a>{" "}
-          <span className="text-neutral-400">(new tab)</span>
-        </p>
+        {showFullPageLink ? (
+          <p className="mt-4 border-t border-neutral-200 pt-3 text-center text-xs text-neutral-500">
+            <a
+              href={fullPageHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-neutral-700 underline underline-offset-2 hover:text-neutral-900"
+            >
+              Open full page
+            </a>{" "}
+            <span className="text-neutral-400">(new tab)</span>
+          </p>
+        ) : null}
       </div>
     </div>
   );

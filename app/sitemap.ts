@@ -9,6 +9,7 @@ const STATIC_PATHS = [
   "/how-it-works",
   "/museum-sources",
   "/faq",
+  "/exhibits",
 ] as const;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -23,21 +24,22 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }));
 
   const exhibits = await prisma.exhibit.findMany({
+    where: {
+      featureOnHomepage: true,
+      slots: { some: { position: SLOT_COUNT } },
+    },
     select: {
       id: true,
       createdAt: true,
-      _count: { select: { slots: true } },
     },
   });
 
-  const exhibitEntries: MetadataRoute.Sitemap = exhibits
-    .filter((e) => e._count.slots === SLOT_COUNT)
-    .map((e) => ({
-      url: `${base}/e/${e.id}`,
-      lastModified: e.createdAt,
-      changeFrequency: "monthly" as const,
-      priority: 0.6,
-    }));
+  const exhibitEntries: MetadataRoute.Sitemap = exhibits.map((e) => ({
+    url: `${base}/e/${e.id}`,
+    lastModified: e.createdAt,
+    changeFrequency: "monthly" as const,
+    priority: 0.6,
+  }));
 
   return [...staticEntries, ...exhibitEntries];
 }
