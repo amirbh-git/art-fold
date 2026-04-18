@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import { JsonLd } from "@/components/JsonLd";
 import {
   DEFAULT_SITE_ORIGIN,
@@ -48,6 +49,7 @@ export default function RootLayout({
       <body className="min-h-screen bg-[var(--canvas)] antialiased">
         <JsonLd data={siteGraphJsonLd()} />
         {children}
+        <Analytics />
       </body>
     </html>
   );
