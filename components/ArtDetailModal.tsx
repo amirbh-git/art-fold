@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { collectionLinkText } from "@/lib/art-sources/copy";
+import { collectionLinkText, museumDisplayName } from "@/lib/art-sources/copy";
 import type { WallSlotPayload } from "@/lib/art-sources/types";
 
 type Props = {
@@ -81,6 +81,7 @@ export function ArtDetailModal({ card, onClose }: Props) {
             <DetailRow label="Dimensions" value={card.dimensions} />
             <DetailRow label="Department" value={card.department} />
             <DetailRow label="Credit" value={card.creditLine} />
+            <DetailRow label="Museum" value={museumDisplayName(card.source)} />
           </dl>
 
           {card.objectUrl && (

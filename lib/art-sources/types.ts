@@ -3,6 +3,14 @@ export const ART_SOURCE_IDS = [
   "artic",
   "harvard",
   "cleveland",
+  "whitney",
+  "rijks",
+  "ngl",
+  "getty",
+  "vam",
+  "mplus",
+  "nma",
+  "cooper",
 ] as const;
 
 export type ArtSourceId = (typeof ART_SOURCE_IDS)[number];

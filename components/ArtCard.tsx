@@ -142,6 +142,7 @@ export const ArtCard = forwardRef<ArtCardHandle, Props>(function ArtCard(
             onClick={handleImageClick}
             loading="eager"
             decoding="async"
+            fetchPriority="high"
           />
         </div>
         <div className="flex min-h-0 flex-1 flex-col justify-center py-2">

@@ -15,7 +15,12 @@ function normalizeExcludeIds(raw: string[]): Set<string> {
   for (const x of raw) {
     const s = String(x).trim();
     if (!s) continue;
-    if (/^(met|artic|harvard|cleveland):/.test(s)) out.add(s);
+    if (
+      /^(met|artic|harvard|cleveland|whitney|rijks|ngl|getty|vam|mplus|nma|cooper):/.test(
+        s,
+      )
+    )
+      out.add(s);
     else out.add(`met:${s}`);
   }
   return out;

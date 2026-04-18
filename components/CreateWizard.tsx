@@ -25,10 +25,11 @@ type Step = "swipe" | "theme" | "done";
 const THEME_MAX = 280;
 const NAME_MAX = 120;
 /**
- * First paint: fetch this many cards, warm their images, show the first only when its image is ready.
- * Remaining cards stay in buffer so swipes feel instant.
+ * First paint: fetch this many cards (then preload images in the background — do not block UI on decode).
+ * Smaller batches return faster from `/api/exhibits/cards` because latency is dominated by the slowest museum in the parallel chunk.
+ * With 6, five cards sit behind the top one — `refillBuffer` runs once the buffer drops below BUFFER_LOW.
  */
-const INITIAL_SWIPE_FETCH = 10;
+const INITIAL_SWIPE_FETCH = 6;
 /** Refill when this many (or fewer) cards remain in the queue behind the current — stay ahead of the user. */
 const BUFFER_LOW = 7;
 const REFILL_BATCH = 8;
@@ -44,7 +45,7 @@ function preloadImage(url: string | undefined): Promise<void> {
   });
 }
 
-/** First card blocks first paint; remaining images preload in parallel without delaying the stack. */
+/** Preloads deck images in the background so later swipes stay instant (does not gate the spinner). */
 async function warmSwipeDeckImages(cards: WallSlotPayload[]): Promise<void> {
   if (cards.length === 0) return;
   await preloadImage(cards[0]?.imageUrl);
@@ -194,7 +195,7 @@ export function CreateWizard() {
       );
       if (error) setCardsFetchError(error);
       if (cards.length > 0) {
-        await warmSwipeDeckImages(cards);
+        void warmSwipeDeckImages(cards);
         const [first, ...rest] = cards;
         setCurrentCard(first!);
         setBuffer(rest);
@@ -231,7 +232,7 @@ export function CreateWizard() {
         if (error) setCardsFetchError(error);
         else setCardsFetchError(null);
         if (cards.length > 0) {
-          await warmSwipeDeckImages(cards);
+          void warmSwipeDeckImages(cards);
           const [first, ...rest] = cards;
           setCurrentCard(first!);
           setBuffer(rest);
@@ -267,7 +268,7 @@ export function CreateWizard() {
         if (cancelled) return;
         if (error) setCardsFetchError(error);
         if (cards.length > 0) {
-          await warmSwipeDeckImages(cards);
+          void warmSwipeDeckImages(cards);
           if (cancelled) return;
           const [first, ...rest] = cards;
           setCurrentCard(first!);

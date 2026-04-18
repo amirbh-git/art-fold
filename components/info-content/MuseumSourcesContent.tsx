@@ -1,4 +1,5 @@
 import { INFO_ARTICLE_CLASS } from "@/components/info-content/prose";
+import { MUSEUM_API_SOURCES_SORTED } from "@/lib/museum-api-sources";
 
 type Variant = "page" | "modal";
 
@@ -23,34 +24,13 @@ export function MuseumSourcesContent({ variant }: { variant: Variant }) {
       </p>
       {apisHeading}
       <ul>
-        <li>
-          <a href="https://api.artic.edu/docs/" target="_blank" rel="noreferrer">
-            Art Institute of Chicago
-          </a>
-        </li>
-        <li>
-          <a
-            href="https://openaccess-api.clevelandart.org/"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Cleveland Museum of Art
-          </a>
-        </li>
-        <li>
-          <a
-            href="https://github.com/harvardartmuseums/api-docs"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Harvard Art Museums
-          </a>
-        </li>
-        <li>
-          <a href="https://metmuseum.github.io/" target="_blank" rel="noreferrer">
-            The Metropolitan Museum of Art
-          </a>
-        </li>
+        {MUSEUM_API_SOURCES_SORTED.map(({ name, docsUrl }) => (
+          <li key={docsUrl}>
+            <a href={docsUrl} target="_blank" rel="noreferrer">
+              {name}
+            </a>
+          </li>
+        ))}
       </ul>
       <p className="text-sm text-neutral-600">
         Always follow each museum’s reuse and citation guidance when sharing or

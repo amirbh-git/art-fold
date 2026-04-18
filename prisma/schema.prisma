@@ -44,3 +44,17 @@ model ArtPoolEntry {
   @@unique([source, objectId])
   @@index([source])
 }
+
+/**
+ * Frozen copy of the full art pool (same shape as ArtPoolEntry).
+ * Populate with `npm run art-pool:archive-full` before capping or experimenting on ArtPoolEntry.
+ */
+model ArtPoolArchive {
+  id        String   @id @default(cuid())
+  source    String
+  objectId  String
+  createdAt DateTime @default(now())
+
+  @@unique([source, objectId])
+  @@index([source])
+}

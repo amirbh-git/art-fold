@@ -6,7 +6,7 @@ import { infoPageMetadata } from "@/lib/info-pages";
 import { breadcrumbJsonLd, webPageJsonLd } from "@/lib/schema-org";
 
 const DESCRIPTION =
-  "Artworks shown in Art Match come from partner museums’ open APIs: Art Institute of Chicago, Cleveland Museum of Art, Harvard Art Museums, and The Met.";
+  "Artworks in Art Match come from twelve partner museums via their public collection APIs, listed A–Z with links to each source’s developer documentation.";
 
 export const metadata: Metadata = infoPageMetadata({
   title: "Museum sources",
