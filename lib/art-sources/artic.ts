@@ -57,7 +57,7 @@ export async function fetchArticArtwork(
     "dimensions",
   ].join(",");
   const res = await fetch(`${AIC_BASE}/artworks/${id}?fields=${fields}`, {
-    cache: "no-store",
+    next: { revalidate: 3600 },
   });
   if (!res.ok) return null;
   const json = (await res.json()) as ArtworkResponse;
@@ -165,12 +165,29 @@ export async function getRandomArticSlots(
 
   while (out.length < count && guard < count * 100) {
     guard++;
-    let id: string | null = null;
+    const need = count - out.length;
+
     if (usePool) {
-      const fromPool = await pickRandomObjectIdsFromPool("artic", exclude, 1);
-      if (fromPool.length > 0) id = fromPool[0]!;
+      const ids = await pickRandomObjectIdsFromPool("artic", exclude, need);
+      if (ids.length > 0) {
+        const fetched = await Promise.all(
+          ids.map((oid) => fetchArticArtwork(oid)),
+        );
+        for (let i = 0; i < fetched.length; i++) {
+          const slot = fetched[i];
+          const oid = ids[i]!;
+          if (!slot) {
+            exclude.add(`artic:${oid}`);
+            continue;
+          }
+          exclude.add(`artic:${slot.objectId}`);
+          out.push(slot);
+        }
+        continue;
+      }
     }
-    if (id == null) id = await pickRandomArticId(exclude);
+
+    const id = await pickRandomArticId(exclude);
     if (!id) break;
     const slot = await fetchArticArtwork(id);
     if (!slot) {

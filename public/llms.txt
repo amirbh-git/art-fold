@@ -1,0 +1,18 @@
+# Art Match
+
+> https://www.artmat.ch
+
+Art Match is a minimal web app to discover public-domain and open-access museum art, browse works from partner museum APIs, and curate a personal six-work digital exhibition with a shareable public URL.
+
+## Key URLs
+
+- https://www.artmat.ch/
+- https://www.artmat.ch/about
+- https://www.artmat.ch/how-it-works
+- https://www.artmat.ch/museum-sources
+- https://www.artmat.ch/faq
+- https://www.artmat.ch/sitemap.xml
+
+## Contact
+
+Site credits and author link appear in the app footer on the home page.

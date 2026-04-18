@@ -25,6 +25,9 @@ type Props = {
 const SWIPE_THRESHOLD = 80;
 export const ART_CARD_FLY_MS = 320;
 
+/** Image viewport + title band; sync CreateWizard loading / empty placeholders. */
+export const ART_CARD_TOTAL_HEIGHT_CLASS = "h-[426px]";
+
 export const ArtCard = forwardRef<ArtCardHandle, Props>(function ArtCard(
   { card, onPass, onCurate, onTapImage },
   ref,
@@ -113,9 +116,9 @@ export const ArtCard = forwardRef<ArtCardHandle, Props>(function ArtCard(
     : `translateX(${offset}px) rotate(${rotation}deg)`;
 
   return (
-    <div className="animate-art-card-enter flex flex-col items-center">
+    <div className="animate-art-card-enter flex w-full flex-col items-center">
       <div
-        className="w-full max-w-sm cursor-grab touch-pan-y select-none overflow-hidden rounded-xl border border-neutral-300/80 bg-white shadow-lg active:cursor-grabbing"
+        className={`flex w-full max-w-sm cursor-grab touch-pan-y select-none flex-col overflow-hidden rounded-xl border border-neutral-300/80 bg-white shadow-lg active:cursor-grabbing ${ART_CARD_TOTAL_HEIGHT_CLASS}`}
         style={{
           transform,
           opacity,
@@ -129,20 +132,28 @@ export const ArtCard = forwardRef<ArtCardHandle, Props>(function ArtCard(
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element -- natural aspect */}
-        <img
-          src={card.imageUrl}
-          alt=""
-          className="block w-full"
-          draggable={false}
-          onClick={handleImageClick}
-          loading="eager"
-          decoding="async"
-        />
-        <div className="px-4 py-3">
-          <p className="text-base font-medium leading-snug text-neutral-900">
-            {card.title}
-          </p>
+        <div className="flex h-[319px] w-full shrink-0 items-center justify-center bg-neutral-100/50">
+          {/* eslint-disable-next-line @next/next/no-img-element -- letterboxed in fixed frame */}
+          <img
+            src={card.imageUrl}
+            alt=""
+            className="max-h-full max-w-full object-contain"
+            draggable={false}
+            onClick={handleImageClick}
+            loading="eager"
+            decoding="async"
+          />
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col justify-center py-2">
+          <div
+            className="shrink-0 border-t border-neutral-300/80"
+            aria-hidden
+          />
+          <div className="px-4 pt-2">
+            <p className="line-clamp-2 text-left text-base font-medium leading-snug text-neutral-900">
+              {card.title}
+            </p>
+          </div>
         </div>
       </div>
     </div>

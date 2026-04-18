@@ -45,7 +45,7 @@ export async function fetchClevelandArtwork(
   id: string,
 ): Promise<WallSlotPayload | null> {
   const res = await fetch(`${CMA_BASE}/${encodeURIComponent(id)}`, {
-    cache: "no-store",
+    next: { revalidate: 3600 },
   });
   if (!res.ok) return null;
   const json = (await res.json()) as CmaOneResponse;
@@ -158,12 +158,29 @@ export async function getRandomClevelandSlots(
 
   while (out.length < count && guard < count * 100) {
     guard++;
-    let id: string | null = null;
+    const need = count - out.length;
+
     if (usePool) {
-      const fromPool = await pickRandomObjectIdsFromPool("cleveland", exclude, 1);
-      if (fromPool.length > 0) id = fromPool[0]!;
+      const ids = await pickRandomObjectIdsFromPool("cleveland", exclude, need);
+      if (ids.length > 0) {
+        const fetched = await Promise.all(
+          ids.map((oid) => fetchClevelandArtwork(oid)),
+        );
+        for (let i = 0; i < fetched.length; i++) {
+          const slot = fetched[i];
+          const oid = ids[i]!;
+          if (!slot) {
+            exclude.add(`cleveland:${oid}`);
+            continue;
+          }
+          exclude.add(`cleveland:${slot.objectId}`);
+          out.push(slot);
+        }
+        continue;
+      }
     }
-    if (id == null) id = await pickRandomClevelandId(exclude);
+
+    const id = await pickRandomClevelandId(exclude);
     if (!id) break;
     const slot = await fetchClevelandArtwork(id);
     if (!slot) {

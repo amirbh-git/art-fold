@@ -6,9 +6,11 @@ import { SLOT_COUNT } from "@/lib/wall-layout";
 type Props = {
   curated: WallSlotPayload[];
   onRemove: (index: number) => void;
+  /** Opens the same detail view as the main card (tray thumbnail tap, not the ×). */
+  onOpenDetail?: (slot: WallSlotPayload) => void;
 };
 
-export function ExhibitTray({ curated, onRemove }: Props) {
+export function ExhibitTray({ curated, onRemove, onOpenDetail }: Props) {
   const slots = Array.from({ length: SLOT_COUNT }, (_, i) => curated[i] ?? null);
 
   return (
@@ -24,18 +26,28 @@ export function ExhibitTray({ curated, onRemove }: Props) {
           >
             {slot ? (
               <>
-                {/* eslint-disable-next-line @next/next/no-img-element -- tiny thumbnail */}
-                <img
-                  src={slot.imageUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                  loading="lazy"
-                  decoding="async"
-                />
                 <button
                   type="button"
-                  onClick={() => onRemove(i)}
-                  className="absolute -right-0.5 -top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-900/80 text-[10px] font-bold leading-none text-white shadow-sm hover:bg-neutral-900"
+                  className="absolute inset-0 block h-full w-full overflow-hidden rounded-md p-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 focus-visible:ring-offset-1"
+                  onClick={() => onOpenDetail?.(slot)}
+                  aria-label={`View details: ${slot.title}`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element -- tiny thumbnail */}
+                  <img
+                    src={slot.imageUrl}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemove(i);
+                  }}
+                  className="absolute -right-0.5 -top-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-900/80 text-[10px] font-bold leading-none text-white shadow-sm hover:bg-neutral-900"
                   aria-label={`Remove ${slot.title}`}
                 >
                   ×

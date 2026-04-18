@@ -12,8 +12,7 @@ import {
 } from "@/lib/met-filters";
 import { SLOT_COUNT } from "@/lib/wall-layout";
 import { GalleryWall } from "./GalleryWall";
-import { PartnerMuseumsAttribution } from "./PartnerMuseumsAttribution";
-import { ArtCard } from "./ArtCard";
+import { ArtCard, ART_CARD_TOTAL_HEIGHT_CLASS } from "./ArtCard";
 import type { ArtCardHandle } from "./art-card-handle";
 import { ExhibitTray } from "./ExhibitTray";
 import { ArtDetailModal } from "./ArtDetailModal";
@@ -45,11 +44,11 @@ function preloadImage(url: string | undefined): Promise<void> {
   });
 }
 
-/** First card blocks until loaded; next cards warm in parallel for seamless handoff. */
+/** First card blocks first paint; remaining images preload in parallel without delaying the stack. */
 async function warmSwipeDeckImages(cards: WallSlotPayload[]): Promise<void> {
   if (cards.length === 0) return;
   await preloadImage(cards[0]?.imageUrl);
-  await Promise.all(cards.slice(1).map((c) => preloadImage(c.imageUrl)));
+  void Promise.all(cards.slice(1).map((c) => preloadImage(c.imageUrl)));
 }
 
 function prefetchBufferImages(buffer: WallSlotPayload[], max = 8): void {
@@ -417,14 +416,8 @@ export function CreateWizard() {
   const shareUrl = published ? `${origin()}/e/${published.id}` : "";
 
   return (
-    <main className="min-h-dvh-safe touch-manipulation overflow-auto bg-[var(--canvas)] px-4 pb-safe pt-6">
+    <>
       <div className="mx-auto flex max-w-sm flex-col">
-        <header className="mb-4 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-neutral-900">
-            Art Match
-          </h1>
-        </header>
-
         {/* ─── SWIPE STEP ─── */}
         {step === "swipe" && (
           <section className="flex flex-col gap-4">
@@ -441,9 +434,11 @@ export function CreateWizard() {
                 </button>
               </div>
             )}
-            <div className="relative min-h-[280px]">
+            <div className="relative shrink-0">
               {loadingCards && !currentCard && (
-                <div className="flex h-[280px] items-center justify-center">
+                <div
+                  className={`flex items-center justify-center ${ART_CARD_TOTAL_HEIGHT_CLASS}`}
+                >
                   <div className="flex items-center gap-2 text-sm text-neutral-500">
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400/40 border-t-neutral-600" />
                     Loading artworks...
@@ -452,7 +447,9 @@ export function CreateWizard() {
               )}
 
               {!loadingCards && !currentCard && !isFull && (
-                <div className="flex h-[280px] flex-col items-center justify-center gap-2 px-2 text-center">
+                <div
+                  className={`flex flex-col items-center justify-center gap-2 px-2 text-center ${ART_CARD_TOTAL_HEIGHT_CLASS}`}
+                >
                   <p className="text-sm text-neutral-500">
                     {cardsFetchError
                       ? "Fix the issue above, or retry."
@@ -499,7 +496,7 @@ export function CreateWizard() {
                 <button
                   type="button"
                   onClick={() => artCardRef.current?.playPass()}
-                  className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-neutral-400/70 bg-white text-2xl font-bold text-neutral-500 shadow-sm transition-colors hover:border-red-400 hover:text-red-500"
+                  className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-neutral-400/70 bg-white text-2xl font-bold text-neutral-500 shadow-sm transition-colors hover:border-red-400 hover:text-red-500 active:border-red-400 active:text-red-500"
                   aria-label="Pass"
                 >
                   ✕
@@ -520,7 +517,7 @@ export function CreateWizard() {
                 <button
                   type="button"
                   onClick={() => artCardRef.current?.playCurate()}
-                  className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-neutral-400/70 bg-white text-2xl font-bold text-green-600 shadow-sm transition-colors hover:border-green-500 hover:text-green-700"
+                  className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-neutral-400/70 bg-white text-2xl font-bold text-neutral-500 shadow-sm transition-colors hover:border-green-500 hover:text-green-700 active:border-green-500 active:text-green-700"
                   aria-label="Curate"
                 >
                   ✓
@@ -540,24 +537,14 @@ export function CreateWizard() {
               </div>
             )}
 
-            <ExhibitTray curated={curated} onRemove={handleRemoveFromTray} />
-
-            <ExhibitHowItWorksHint />
-
-            <div className="mt-1">
-              <PartnerMuseumsAttribution />
+            <div className="flex flex-col gap-[1.215rem]">
+              <ExhibitTray
+                curated={curated}
+                onRemove={handleRemoveFromTray}
+                onOpenDetail={setDetailCard}
+              />
+              <ExhibitHowItWorksHint />
             </div>
-            <p className="mt-3 text-center text-[11px] text-neutral-500">
-              Designed by{" "}
-              <a
-                href="https://www.amirbh.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-medium text-neutral-600 underline decoration-neutral-400 underline-offset-2 hover:text-neutral-900"
-              >
-                Amir Ben-Harosh
-              </a>
-            </p>
           </section>
         )}
 
@@ -773,6 +760,6 @@ export function CreateWizard() {
           onApply={(next) => void reloadCardsAfterFilterChange(next)}
         />
       )}
-    </main>
+    </>
   );
 }

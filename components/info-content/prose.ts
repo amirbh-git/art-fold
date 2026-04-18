@@ -1,0 +1,3 @@
+/** Shared article typography for info pages and modals. */
+export const INFO_ARTICLE_CLASS =
+  "mx-auto max-w-xl space-y-4 text-[15px] leading-relaxed text-neutral-800 [&_h1]:text-2xl [&_h1]:font-semibold [&_h1]:tracking-tight [&_h1]:text-neutral-900 [&_h2]:mt-8 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:uppercase [&_h2]:tracking-wide [&_h2]:text-neutral-600 [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:normal-case [&_h3]:text-neutral-900 [&_ul]:list-inside [&_ul]:list-disc [&_ul]:space-y-2 [&_ol]:list-inside [&_ol]:list-decimal [&_ol]:space-y-3 [&_a]:text-neutral-900 [&_a]:underline [&_a]:decoration-neutral-400 [&_a]:underline-offset-2";

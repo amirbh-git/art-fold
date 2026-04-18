@@ -40,18 +40,20 @@ export function ArtDetailModal({ card, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 pt-12 backdrop-blur-sm">
       <div
-        className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+        className="relative flex w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
         role="dialog"
         aria-label={`Details: ${card.title}`}
       >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-lg font-bold text-neutral-700 shadow-sm hover:bg-white"
-          aria-label="Close"
-        >
-          ×
-        </button>
+        <div className="flex shrink-0 items-center justify-end border-b border-neutral-200/80 px-2 py-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-lg font-bold text-neutral-700 hover:bg-neutral-100"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
 
         {/* eslint-disable-next-line @next/next/no-img-element -- detail view */}
         <img

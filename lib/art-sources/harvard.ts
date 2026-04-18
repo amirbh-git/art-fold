@@ -81,7 +81,7 @@ export async function fetchHarvardObject(
   if (!key) return null;
   const res = await fetch(
     `${HARVARD_BASE}/object/${encodeURIComponent(objectId)}?apikey=${encodeURIComponent(key)}`,
-    { cache: "no-store" },
+    { next: { revalidate: 3600 } },
   );
   if (!res.ok) return null;
   const o = (await res.json()) as HarvardObject;
@@ -204,12 +204,29 @@ export async function getRandomHarvardSlots(
 
   while (out.length < count && guard < count * 100) {
     guard++;
-    let id: string | null = null;
+    const need = count - out.length;
+
     if (usePool) {
-      const fromPool = await pickRandomObjectIdsFromPool("harvard", exclude, 1);
-      if (fromPool.length > 0) id = fromPool[0]!;
+      const ids = await pickRandomObjectIdsFromPool("harvard", exclude, need);
+      if (ids.length > 0) {
+        const fetched = await Promise.all(
+          ids.map((oid) => fetchHarvardObject(oid)),
+        );
+        for (let i = 0; i < fetched.length; i++) {
+          const slot = fetched[i];
+          const oid = ids[i]!;
+          if (!slot) {
+            exclude.add(`harvard:${oid}`);
+            continue;
+          }
+          exclude.add(`harvard:${slot.objectId}`);
+          out.push(slot);
+        }
+        continue;
+      }
     }
-    if (id == null) id = await pickRandomHarvardId(exclude);
+
+    const id = await pickRandomHarvardId(exclude);
     if (!id) break;
     const slot = await fetchHarvardObject(id);
     if (!slot) {

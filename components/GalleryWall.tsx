@@ -21,7 +21,7 @@ const TOKENS: Record<
 > = {
   normal: {
     gapPx: 7,
-    borderClass: "rounded-[2px] border-[3px]",
+    borderClass: "rounded-[2px] border-2",
     lockIconClass: "h-3.5 w-3.5",
     maxWallNarrow: "max-w-[18.5rem]",
     maxWallPublic: "max-w-[21rem] sm:max-w-[27rem]",
@@ -54,6 +54,8 @@ type Props = {
   variant?: GalleryWallVariant;
   loading?: boolean;
   density?: WallDensity;
+  /** Public (non-interactive) wall: open detail when a tile is activated. */
+  onTileClick?: (slot: WallSlotPayload) => void;
 };
 
 function LockIcon({ locked, className }: { locked: boolean; className: string }) {
@@ -105,6 +107,7 @@ function Tile({
   interactive,
   showLockChrome,
   onToggleLock,
+  onTileClick,
   t,
 }: {
   slot: WallSlotPayload;
@@ -113,17 +116,20 @@ function Tile({
   interactive: boolean;
   showLockChrome: boolean;
   onToggleLock?: (index: number) => void;
+  onTileClick?: (slot: WallSlotPayload) => void;
   t: (typeof TOKENS)[WallDensity];
 }) {
   const showRing = interactive && showLockChrome && isLocked;
 
   const frameClass = [
-    "group relative overflow-hidden border-neutral-600 bg-[var(--canvas)] shadow-sm transition-colors",
+    "group relative overflow-hidden border-neutral-600/75 bg-[var(--canvas)] shadow-sm transition-colors",
     t.borderClass,
     showRing
       ? "ring-2 ring-neutral-900 ring-offset-1 ring-offset-[var(--canvas)]"
       : "",
-    interactive && showLockChrome ? "hover:border-neutral-700" : "",
+    interactive && showLockChrome
+      ? "hover:border-neutral-700/85"
+      : "",
   ].join(" ");
 
   const lockBadge = interactive && showLockChrome && (
@@ -143,7 +149,7 @@ function Tile({
     <img
       src={slot.imageUrl}
       alt={interactive ? "" : slot.title}
-      className="block w-full"
+      className="block w-full max-w-full align-bottom"
       loading="lazy"
       decoding="async"
     />
@@ -159,7 +165,7 @@ function Tile({
         <button
           type="button"
           onClick={() => onToggleLock?.(index)}
-          className="relative w-full touch-manipulation p-0 text-left"
+          className="relative flex w-full flex-col touch-manipulation p-0 leading-none text-left"
           aria-pressed={isLocked}
           aria-label={
             isLocked
@@ -169,6 +175,21 @@ function Tile({
         >
           {image}
           {lockBadge}
+        </button>
+      </div>
+    );
+  }
+
+  if (onTileClick) {
+    return (
+      <div className={frameClass}>
+        <button
+          type="button"
+          onClick={() => onTileClick(slot)}
+          className="relative flex w-full flex-col p-0 leading-none touch-manipulation text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 focus-visible:ring-offset-1"
+          aria-label={`View details: ${slot.title}`}
+        >
+          {image}
         </button>
       </div>
     );
@@ -190,6 +211,7 @@ export function GalleryWall({
   variant = "selection",
   loading = false,
   density = "normal",
+  onTileClick,
 }: Props) {
   const lockState = locked ?? Array(SLOT_COUNT).fill(false);
   const t = TOKENS[density];
@@ -217,6 +239,7 @@ export function GalleryWall({
               interactive={interactive}
               showLockChrome={showLockChrome}
               onToggleLock={onToggleLock}
+              onTileClick={onTileClick}
               t={t}
             />
           ))}
@@ -231,6 +254,7 @@ export function GalleryWall({
               interactive={interactive}
               showLockChrome={showLockChrome}
               onToggleLock={onToggleLock}
+              onTileClick={onTileClick}
               t={t}
             />
           ))}
