@@ -242,9 +242,9 @@ Replace `YOUR_USERNAME` and `YOUR_REPO` with yours. Use the HTTPS URL GitHub sho
 
 5. After deploy, open the site URL Vercel gives you. Set **`NEXT_PUBLIC_APP_URL`** to that exact URL (including `https://`) and redeploy once so share links and Open Graph use the right domain.
 
-### Custom domain (e.g. artmat.ch)
+### Custom domain (e.g. artfold.xyz)
 
-After you add a domain in Vercel (**Project → Settings → Domains**), set **`NEXT_PUBLIC_APP_URL`** to your public URL, for example `https://artmat.ch` (no trailing slash), and redeploy. Share links and metadata use this value in production.
+After you add a domain in Vercel (**Project → Settings → Domains**), set **`NEXT_PUBLIC_APP_URL`** to your public URL, for example `https://www.artfold.xyz` (no trailing slash), and redeploy. Share links and metadata use this value in production.
 
 ### Harvard API key hygiene
 

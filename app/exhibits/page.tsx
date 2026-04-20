@@ -10,7 +10,7 @@ import { SITE_NAME, absoluteUrl } from "@/lib/site";
 import { SLOT_COUNT } from "@/lib/wall-layout";
 
 const PAGE_TITLE = `All exhibits — ${SITE_NAME}`;
-const PAGE_DESC = "Browse curated exhibits listed on Art Match.";
+const PAGE_DESC = "Browse curated exhibits listed on Art Fold.";
 
 const canonical = absoluteUrl("/exhibits");
 

@@ -14,7 +14,7 @@ export function ExhibitHowItWorksHint() {
           type="button"
           onClick={() => setOpen(true)}
           className="flex h-8 w-8 items-center justify-center rounded-full border border-neutral-400/70 bg-white text-sm font-semibold text-neutral-600 shadow-sm hover:border-neutral-600 hover:text-neutral-900"
-          aria-label="How Art Match works"
+          aria-label="How Art Fold works"
           title="How does this work?"
         >
           ?
@@ -24,12 +24,12 @@ export function ExhibitHowItWorksHint() {
       <InfoModal
         open={open}
         onClose={() => setOpen(false)}
-        title="How Art Match works"
+        title="How Art Fold works"
         fullPageHref="/how-it-works"
       >
         <div className={INFO_ARTICLE_CLASS}>
           <h2 className="text-2xl font-semibold tracking-tight text-neutral-900 normal-case">
-            How Art Match works
+            How Art Fold works
           </h2>
           <ol className="list-inside list-decimal space-y-3">
             <li>

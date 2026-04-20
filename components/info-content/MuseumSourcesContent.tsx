@@ -19,7 +19,7 @@ export function MuseumSourcesContent({ variant }: { variant: Variant }) {
       {title}
       <p>
         Images and object metadata are served by the museums (or their CDNs)
-        under their own terms. Art Match only aggregates what those APIs expose
+        under their own terms. Art Fold only aggregates what those APIs expose
         for open access or public-domain works, depending on each collection.
       </p>
       {apisHeading}

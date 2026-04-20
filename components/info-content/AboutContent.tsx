@@ -13,7 +13,7 @@ export function AboutContent({ variant }: { variant: Variant }) {
         </h2>
       )}
       <p>
-        Art Match is a small experiment in digital curation. It lets anyone browse
+        Art Fold is a small experiment in digital curation. It lets anyone browse
         works from partner museum collections, select six that resonate and fit
         any theme, and turn them into an exhibit that can be easily shared with
         anyone.

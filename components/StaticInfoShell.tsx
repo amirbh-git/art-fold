@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { INFO_ARTICLE_CLASS } from "@/components/info-content/prose";
 import { SiteNavLinks } from "@/components/SiteNavLinks";
+import { SITE_NAME } from "@/lib/site";
 
 type Props = {
   children: React.ReactNode;
@@ -16,7 +17,7 @@ export function StaticInfoShell({ children }: Props) {
             prefetch={false}
             className="font-medium text-neutral-900 underline underline-offset-2"
           >
-            Art Match
+            {SITE_NAME}
           </Link>
         </p>
         <SiteNavLinks className="mt-3" />

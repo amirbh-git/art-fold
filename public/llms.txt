@@ -1,17 +1,17 @@
-# Art Match
+# Art Fold
 
-> https://www.artmat.ch
+> https://www.artfold.xyz
 
-Art Match is a minimal web app to discover public-domain and open-access museum art, browse works from partner museum APIs, and curate a personal six-work digital exhibition with a shareable public URL.
+Art Fold is a minimal web app to discover public-domain and open-access museum art, browse works from partner museum APIs, and curate a personal six-work digital exhibition with a shareable public URL.
 
 ## Key URLs
 
-- https://www.artmat.ch/
-- https://www.artmat.ch/about
-- https://www.artmat.ch/how-it-works
-- https://www.artmat.ch/museum-sources
-- https://www.artmat.ch/faq
-- https://www.artmat.ch/sitemap.xml
+- https://www.artfold.xyz/
+- https://www.artfold.xyz/about
+- https://www.artfold.xyz/how-it-works
+- https://www.artfold.xyz/museum-sources
+- https://www.artfold.xyz/faq
+- https://www.artfold.xyz/sitemap.xml
 
 ## Contact
 

@@ -128,7 +128,7 @@ export default async function ExhibitPage({ params }: Props) {
             prefetch={false}
             className="text-sm font-medium text-neutral-900 underline underline-offset-2"
           >
-            Curate your own exhibit on Art Match
+            Curate your own exhibit on Art Fold
           </Link>
           <Link
             href="/exhibits"

@@ -726,7 +726,7 @@ export function CreateWizard({
                 </label>
                 <input
                   id="exhibit-name"
-                  name="art-match-exhibit-title"
+                  name="art-fold-exhibit-title"
                   type="text"
                   maxLength={NAME_MAX}
                   value={exhibitTitleInput}
@@ -752,7 +752,7 @@ export function CreateWizard({
                 <div className="rounded-lg border border-neutral-400/50 bg-white p-3 shadow-sm">
                   <textarea
                     id="theme-desc"
-                    name="art-match-theme-desc"
+                    name="art-fold-theme-desc"
                     rows={3}
                     maxLength={THEME_MAX}
                     value={themeDescription}
@@ -776,7 +776,7 @@ export function CreateWizard({
                 </label>
                 <input
                   id="curator-name"
-                  name="art-match-curator"
+                  name="art-fold-curator"
                   type="text"
                   maxLength={NAME_MAX}
                   value={curatorNameInput}

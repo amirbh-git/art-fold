@@ -13,7 +13,7 @@ type Props = {
 export function ShareRow({ url, exhibitTitle, blurb }: Props) {
   const text =
     blurb?.trim() ||
-    `See my exhibit on Art Match: ${exhibitTitle.trim() || SITE_NAME}`;
+    `See my exhibit on ${SITE_NAME}: ${exhibitTitle.trim() || SITE_NAME}`;
 
   const canNativeShare =
     typeof navigator !== "undefined" &&

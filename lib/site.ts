@@ -1,7 +1,7 @@
 /** Canonical public host when env is unset (OG URLs, robots sitemap hint). */
-export const DEFAULT_SITE_ORIGIN = "https://www.artmat.ch";
+export const DEFAULT_SITE_ORIGIN = "https://www.artfold.xyz";
 
-export const SITE_NAME = "Art Match";
+export const SITE_NAME = "Art Fold";
 
 export const SITE_TAGLINE =
   "Discover public-domain museum art, browse open-access collections, and curate your own six-work digital exhibition.";

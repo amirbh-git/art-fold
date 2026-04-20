@@ -63,7 +63,7 @@ export function FaqContent({ variant, onMuseumSourcesClick }: Props) {
       </p>
       {q("Is this affiliated with the museums?")}
       <p>
-        Art Match is an independent project that uses their public APIs. It is not
+        Art Fold is an independent project that uses their public APIs. It is not
         endorsed by the museums.
       </p>
     </>

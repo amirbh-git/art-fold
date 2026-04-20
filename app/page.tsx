@@ -10,7 +10,7 @@ import { SITE_NAME, SITE_TAGLINE, absoluteUrl } from "@/lib/site";
 import { webPageJsonLd } from "@/lib/schema-org";
 
 const HOME_TITLE =
-  "Art Match — Discover museum art, browse open collections, curate your exhibit";
+  "Art Fold — Discover museum art, browse open collections, curate your exhibit";
 
 const ogUrl = absoluteUrl("/");
 

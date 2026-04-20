@@ -6,7 +6,7 @@ import { infoPageMetadata } from "@/lib/info-pages";
 import { breadcrumbJsonLd, webPageJsonLd } from "@/lib/schema-org";
 
 const DESCRIPTION =
-  "Art Match is a small experiment in digital curation: browse partner museum works, pick six that resonate with any theme, and share your exhibit.";
+  "Art Fold is a small experiment in digital curation: browse partner museum works, pick six that resonate with any theme, and share your exhibit.";
 
 export const metadata: Metadata = infoPageMetadata({
   title: "About",
@@ -18,7 +18,7 @@ export default function AboutPage() {
   return (
     <>
       <JsonLd
-        data={webPageJsonLd("/about", "About Art Match", DESCRIPTION)}
+        data={webPageJsonLd("/about", "About Art Fold", DESCRIPTION)}
       />
       <JsonLd
         data={breadcrumbJsonLd([

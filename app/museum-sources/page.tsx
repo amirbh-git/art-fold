@@ -6,7 +6,7 @@ import { infoPageMetadata } from "@/lib/info-pages";
 import { breadcrumbJsonLd, webPageJsonLd } from "@/lib/schema-org";
 
 const DESCRIPTION =
-  "Artworks in Art Match come from twelve partner museums via their public collection APIs, listed A–Z with links to each source’s developer documentation.";
+  "Artworks in Art Fold come from twelve partner museums via their public collection APIs, listed A–Z with links to each source’s developer documentation.";
 
 export const metadata: Metadata = infoPageMetadata({
   title: "Museum sources",

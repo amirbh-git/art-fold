@@ -6,7 +6,7 @@ import { infoPageMetadata } from "@/lib/info-pages";
 import { breadcrumbJsonLd, webPageJsonLd } from "@/lib/schema-org";
 
 const DESCRIPTION =
-  "Accounts, editing published exhibits, where images come from, and museum affiliation—FAQ for Art Match.";
+  "Accounts, editing published exhibits, where images come from, and museum affiliation—FAQ for Art Fold.";
 
 export const metadata: Metadata = infoPageMetadata({
   title: "FAQ",
@@ -17,7 +17,7 @@ export const metadata: Metadata = infoPageMetadata({
 export default function FaqPage() {
   return (
     <>
-      <JsonLd data={webPageJsonLd("/faq", "FAQ — Art Match", DESCRIPTION)} />
+      <JsonLd data={webPageJsonLd("/faq", "FAQ — Art Fold", DESCRIPTION)} />
       <JsonLd
         data={breadcrumbJsonLd([
           { name: "Home", path: "/" },

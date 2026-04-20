@@ -8,7 +8,7 @@ const DESCRIPTION =
   "Browse museum works one by one, pick six, add optional details, publish, and share your exhibit link.";
 
 export const metadata: Metadata = infoPageMetadata({
-  title: "How Art Match works",
+  title: "How Art Fold works",
   description: DESCRIPTION,
   path: "/how-it-works",
 });
@@ -19,18 +19,18 @@ export default function HowItWorksPage() {
       <JsonLd
         data={webPageJsonLd(
           "/how-it-works",
-          "How Art Match works",
+          "How Art Fold works",
           DESCRIPTION,
         )}
       />
       <JsonLd
         data={breadcrumbJsonLd([
           { name: "Home", path: "/" },
-          { name: "How Art Match works", path: "/how-it-works" },
+          { name: "How Art Fold works", path: "/how-it-works" },
         ])}
       />
       <StaticInfoShell>
-        <h1>How Art Match works</h1>
+        <h1>How Art Fold works</h1>
         <ol className="list-inside list-decimal space-y-3">
           <li>
             Browse artworks one by one, passing or saving each piece until
