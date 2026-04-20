@@ -140,7 +140,7 @@ const NMA_ATTRIBUTION_BLOCKLIST =
   /^(the|unknown|unidentified|various|traditional|artist|maker|wedgwood|museum|collection|australian|european|english|british|american)\b/i;
 
 function nmaCleanAttributionCandidate(raw: string): string | null {
-  let name = raw
+  const name = raw
     .trim()
     .replace(/\s+/g, " ")
     .replace(/\s+(in|from|circa|c\.|about|and|with)\s.*$/i, "")
