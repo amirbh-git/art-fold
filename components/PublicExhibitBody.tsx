@@ -56,7 +56,7 @@ export function PublicExhibitBody({ slots }: Props) {
                   rel="noreferrer"
                   className="text-xs text-neutral-500 underline underline-offset-2 hover:text-neutral-800"
                 >
-                  {collectionLinkText(s.source)}
+                  {collectionLinkText(s.source, s.objectId)}
                 </a>
               ) : null}
             </div>

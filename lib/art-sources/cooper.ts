@@ -1,4 +1,7 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import type { WallSlotPayload } from "./types";
 
 /**
@@ -122,6 +125,26 @@ function artistFromMaker(maker: unknown): string {
     if (typeof t === "string" && t.trim()) return t.trim();
   }
   return "";
+}
+
+/**
+ * Anonymous GraphQL is limited to **depth 2** below `object`; pool ingest uses
+ * `maker { name }` and reads `name[].value` here (see Cooper API docs).
+ */
+function artistFromCooperMakerShallow(maker: unknown): string {
+  if (!Array.isArray(maker)) return "";
+  const parts: string[] = [];
+  for (const agent of maker) {
+    if (!agent || typeof agent !== "object") continue;
+    const names = (agent as { name?: unknown }).name;
+    if (!Array.isArray(names)) continue;
+    for (const blob of names) {
+      if (!blob || typeof blob !== "object") continue;
+      const v = (blob as { value?: string }).value;
+      if (typeof v === "string" && v.trim()) parts.push(v.trim());
+    }
+  }
+  return [...new Set(parts)].join("; ");
 }
 
 function departmentLabel(department: unknown): string | undefined {
@@ -260,20 +283,20 @@ function parseMaxPages(): number {
  * The API backend uses Elasticsearch with `index.max_result_window` 10000, so offset pagination stops
  * before page 40 at size 250 (~9750 rows max per sort order). See Cooper Hewitt GraphQL docs.
  */
-export async function collectCooperObjectIdsForPool(): Promise<string[]> {
+export async function collectCooperObjectIdsForPool(): Promise<ArtPoolIngestRow[]> {
   const perPage = 250;
   const maxPages = parseMaxPages();
   /** ES max_result_window 10k → at size 250, page 40 exceeds the window (API returns an error). */
   const maxPageElasticsearch = 39;
-  const all = new Set<string>();
+  const byId = new Map<string, string | null>();
 
   let page = 1;
   let totalPages = Number.POSITIVE_INFINITY;
 
   while (page <= maxPages && page <= totalPages && page <= maxPageElasticsearch) {
-    const q = `{ object(size: ${perPage}, page: ${page}, hasImages: true) { id } }`;
+    const q = `{ object(size: ${perPage}, page: ${page}, hasImages: true) { id maker { name } } }`;
     const { data, extensions } = await cooperGraphql<{
-      object: Array<{ id?: string }> | null;
+      object: Array<{ id?: string; maker?: unknown }> | null;
     }>(q, undefined, { pool: true });
 
     const tp = extensions?.pagination?.number_of_pages;
@@ -282,13 +305,75 @@ export async function collectCooperObjectIdsForPool(): Promise<string[]> {
     const rows = data?.object ?? [];
     if (rows.length === 0) break;
     for (const r of rows) {
-      if (r.id) all.add(r.id);
+      if (!r.id) continue;
+      if (!byId.has(r.id)) {
+        const art = artistFromCooperMakerShallow(r.maker).trim() || null;
+        byId.set(r.id, art);
+      }
     }
     page++;
     await sleep(poolPageDelayMs());
   }
 
-  return [...all];
+  return [...byId.entries()].map(([objectId, poolArtist]) => ({
+    objectId,
+    poolArtist,
+  }));
+}
+
+function cooperGraphqlStringLiteral(value: string): string {
+  return value
+    .trim()
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r?\n/g, " ");
+}
+
+/**
+ * Full-text `general` search per artist (`hasImages: true`), paginated within ES limits.
+ */
+export async function collectCooperObjectIdsForPopularPool(
+  artistNames: readonly string[],
+): Promise<PopularPoolIngestRow[]> {
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<string>();
+  const perPage = 250;
+  const maxPageElasticsearch = 39;
+
+  for (const raw of artistNames) {
+    const canon = raw.trim();
+    const term = cooperGraphqlStringLiteral(raw);
+    if (!term) continue;
+
+    let page = 1;
+    let totalPages = Number.POSITIVE_INFINITY;
+
+    while (page <= totalPages && page <= maxPageElasticsearch) {
+      const q = `{ object(size: ${perPage}, page: ${page}, hasImages: true, general: "${term}") { id maker { name { value } } } }`;
+      const { data, extensions } = await cooperGraphql<{
+        object: Array<{ id?: string; maker?: unknown }> | null;
+      }>(q, undefined, { pool: true });
+
+      const tp = extensions?.pagination?.number_of_pages;
+      if (typeof tp === "number" && tp > 0) totalPages = tp;
+
+      const rows = data?.object ?? [];
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        if (!r.id) continue;
+        const makerLine = artistFromCooperMakerShallow(r.maker);
+        if (!popularPoolSearchHitMatchesArtist(canon, makerLine)) continue;
+        const composite = `cooper:${r.id}`;
+        if (seen.has(composite)) continue;
+        seen.add(composite);
+        out.push({ compositeObjectId: composite, poolArtist: canon });
+      }
+      page++;
+      await sleep(poolPageDelayMs());
+    }
+  }
+
+  return out;
 }
 
 async function cooperRandomIdsFromSearch(): Promise<string[]> {

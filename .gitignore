@@ -38,3 +38,9 @@ coverage/
 .eslintcache
 .npm
 .cache/
+
+# Local art pool CSV backups (`npm run art-pool:export-csv`)
+exports/
+
+# Local pool id snapshots (`MET_POOL_SAVE_ID_LIST`, etc.)
+data/

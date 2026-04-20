@@ -24,6 +24,7 @@ import { fetchNmaObject } from "@/lib/art-sources/nma";
 import { fetchRijksArtwork } from "@/lib/art-sources/rijks";
 import { fetchVamObject } from "@/lib/art-sources/vam";
 import { fetchWhitneyArtwork } from "@/lib/art-sources/whitney";
+import { fetchPopularCompositeUnderlying } from "@/lib/art-sources/popular";
 import type { ArtSourceId, WallSlotPayload } from "@/lib/art-sources/types";
 
 /** Sources included in the benchmark (matches production random mix). */
@@ -62,6 +63,7 @@ const FALLBACK_ID: Record<BenchSource, string> = {
   mplus: "123",
   nma: "22140",
   cooper: "object-5813",
+  popular: "met:45734",
 };
 
 const DISPLAY: Record<BenchSource, string> = {
@@ -77,6 +79,7 @@ const DISPLAY: Record<BenchSource, string> = {
   mplus: "M+ Museum",
   nma: "National Museum of Australia",
   cooper: "Cooper Hewitt, Smithsonian Design Museum",
+  popular: "Popular artists (composite pool)",
 };
 
 function median(nums: number[]): number {
@@ -115,6 +118,8 @@ async function fetchOne(
       return fetchNmaObject(objectId);
     case "cooper":
       return fetchCooperObject(objectId);
+    case "popular":
+      return fetchPopularCompositeUnderlying(objectId);
     default:
       return null;
   }
@@ -133,6 +138,7 @@ const SOURCES = [
   "mplus",
   "nma",
   "cooper",
+  "popular",
 ] as const satisfies readonly BenchSource[];
 
 async function resolveTestId(

@@ -1,4 +1,7 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import { SEARCH_TERMS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
@@ -82,6 +85,116 @@ function extractObjectNumber(doc: Record<string, unknown>): string | null {
   return visit(doc);
 }
 
+const AAT_LANG_EN = "http://vocab.getty.edu/aat/300388277";
+const AAT_LANG_NL = "http://vocab.getty.edu/aat/300388256";
+const AAT_PRIMARY_NAME = "http://vocab.getty.edu/aat/300404670";
+
+function personNameFromIdentifiedBy(r: Record<string, unknown>): string | null {
+  const identified = r.identified_by;
+  if (!Array.isArray(identified)) return null;
+  type IdEntry = Record<string, unknown>;
+  const names = identified.filter(
+    (x): x is IdEntry =>
+      Boolean(x) && typeof x === "object" && x.type === "Name" && typeof x.content === "string",
+  );
+  const isPrimary = (n: IdEntry): boolean => {
+    const cl = n.classified_as;
+    if (!Array.isArray(cl)) return false;
+    return cl.some(
+      (t) =>
+        t &&
+        typeof t === "object" &&
+        (t as { id?: string }).id === AAT_PRIMARY_NAME,
+    );
+  };
+  const langIsEn = (n: IdEntry): boolean => {
+    const lang = n.language;
+    if (!Array.isArray(lang) || !lang[0]) return false;
+    return (lang[0] as { id?: string }).id === AAT_LANG_EN;
+  };
+  const primaryEn = names.find((n) => isPrimary(n) && langIsEn(n));
+  const primary = names.find(isPrimary);
+  const en = names.find(langIsEn);
+  const pick = primaryEn ?? primary ?? en ?? names[0];
+  const c = pick?.content;
+  return typeof c === "string" ? c.trim() : null;
+}
+
+/** English/Dutch attribution lines on the object (Rijks Linked Art). */
+function captionFromRijksAttributionObject(content: string): string | null {
+  const en = content.match(/(.+?\(mentioned on object\))/i);
+  if (en?.[1]) return en[1].trim();
+  const nl = content.match(/(.+?\(vermeld op object\))/i);
+  if (nl?.[1]) return nl[1].trim();
+  return null;
+}
+
+function isRijksArtistCaptionLanguage(r: Record<string, unknown>): boolean {
+  const lang = r.language;
+  if (!Array.isArray(lang) || lang.length === 0) return true;
+  const id = (lang[0] as { id?: string })?.id;
+  return id === AAT_LANG_EN || id === AAT_LANG_NL;
+}
+
+function isEnglishRijksCaption(r: Record<string, unknown>): boolean {
+  const lang = r.language;
+  if (!Array.isArray(lang) || lang.length === 0) return true;
+  return (lang[0] as { id?: string })?.id === AAT_LANG_EN;
+}
+
+/**
+ * Rijks `HumanMadeObject` docs often reference agents by URI only; creator
+ * strings live in `LinguisticObject` nodes under `produced_by`.
+ */
+function extractArtistFromProducedBy(root: unknown): string | null {
+  if (root == null) return null;
+  const found: { s: string; en: boolean }[] = [];
+  const visit = (o: unknown): void => {
+    if (!o || typeof o !== "object") return;
+    if (Array.isArray(o)) {
+      for (const x of o) visit(x);
+      return;
+    }
+    const r = o as Record<string, unknown>;
+    if (r.type === "LinguisticObject" && typeof r.content === "string") {
+      const raw = r.content.trim();
+      if (
+        raw.length > 2 &&
+        raw.length < 500 &&
+        isRijksArtistCaptionLanguage(r) &&
+        !/^after\b/i.test(raw) &&
+        !/^naar\b/i.test(raw)
+      ) {
+        const cap = captionFromRijksAttributionObject(raw);
+        if (cap)
+          found.push({ s: cap, en: isEnglishRijksCaption(r) });
+      }
+    }
+    if (r.type === "Production") {
+      const keys = [
+        "referred_to_by",
+        "part",
+        "assigned_by",
+        "technique",
+        "timespan",
+      ];
+      for (const k of keys) {
+        if (r[k] != null) visit(r[k]);
+      }
+      for (const [k, v] of Object.entries(r)) {
+        if (k === "type" || keys.includes(k)) continue;
+        visit(v);
+      }
+      return;
+    }
+    for (const v of Object.values(r)) visit(v);
+  };
+  visit(root);
+  if (found.length === 0) return null;
+  found.sort((a, b) => Number(b.en) - Number(a.en) || a.s.length - b.s.length);
+  return found[0]?.s ?? null;
+}
+
 function extractTitle(doc: Record<string, unknown>): string {
   const candidates: string[] = [];
   const visit = (o: unknown): void => {
@@ -109,6 +222,9 @@ function extractTitle(doc: Record<string, unknown>): string {
 }
 
 function extractArtist(doc: Record<string, unknown>): string {
+  const fromProd = extractArtistFromProducedBy(doc.produced_by);
+  if (fromProd) return fromProd;
+
   const visit = (o: unknown): string | null => {
     if (!o || typeof o !== "object") return null;
     if (Array.isArray(o)) {
@@ -142,6 +258,8 @@ function extractArtist(doc: Record<string, unknown>): string {
           }
         }
       }
+      const fromNames = personNameFromIdentifiedBy(r);
+      if (fromNames) return fromNames;
     }
     for (const v of Object.values(r)) {
       const a = visit(v);
@@ -224,13 +342,49 @@ function orderedItemIds(json: SearchPage): string[] {
   return out;
 }
 
+async function rijksArtistLabelForPool(objectId: string): Promise<string | null> {
+  const hmoUrl = `https://id.rijksmuseum.nl/${encodeURIComponent(objectId)}`;
+  const doc = await fetchLinkedJsonLd(hmoUrl);
+  if (!doc || doc.type !== "HumanMadeObject") return null;
+  const a = extractArtist(doc as Record<string, unknown>).trim();
+  return a || null;
+}
+
+/**
+ * Search only returns LOD ids; `poolArtist` needs one Linked Art JSON-LD fetch per object.
+ * Tune with `RIJKS_POOL_ARTIST_CONCURRENCY` (default 8) and `RIJKS_POOL_ARTIST_DELAY_MS` (default 50).
+ */
+async function enrichRijksPoolArtistRows(ids: string[]): Promise<ArtPoolIngestRow[]> {
+  const concurrency = Math.min(
+    16,
+    Math.max(
+      2,
+      Number.parseInt(process.env.RIJKS_POOL_ARTIST_CONCURRENCY ?? "8", 10) || 8,
+    ),
+  );
+  const delayMs = Math.max(
+    0,
+    Number.parseInt(process.env.RIJKS_POOL_ARTIST_DELAY_MS ?? "50", 10) || 0,
+  );
+  const out: ArtPoolIngestRow[] = [];
+  for (let base = 0; base < ids.length; base += concurrency) {
+    const slice = ids.slice(base, base + concurrency);
+    const arts = await Promise.all(slice.map((id) => rijksArtistLabelForPool(id)));
+    for (let i = 0; i < slice.length; i++) {
+      out.push({ objectId: slice[i]!, poolArtist: arts[i] });
+    }
+    if (delayMs > 0) await sleep(delayMs);
+  }
+  return out;
+}
+
 /**
  * Paginates the Search API (`imageAvailable=true`) and stores Linked Art
  * object ids. No API key. Large totals — see `maxPages`.
  */
 export async function collectRijksObjectIdsForPool(
   maxPages = 500,
-): Promise<string[]> {
+): Promise<ArtPoolIngestRow[]> {
   const all = new Set<string>();
   let url: string | null =
     `${SEARCH_BASE}?imageAvailable=true`;
@@ -247,7 +401,42 @@ export async function collectRijksObjectIdsForPool(
     await sleep(40);
   }
 
-  return [...all];
+  return enrichRijksPoolArtistRows([...all]);
+}
+
+/** Follows Search API pages for `description=<artist>` (image objects only). */
+export async function collectRijksObjectIdsForPopularPool(
+  artistNames: readonly string[],
+  maxPagesPerArtist = 40,
+): Promise<PopularPoolIngestRow[]> {
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<string>();
+  for (const raw of artistNames) {
+    const description = raw.trim();
+    if (!description) continue;
+    let url: string | null =
+      `${SEARCH_BASE}?imageAvailable=true&description=${encodeURIComponent(description)}`;
+    let pages = 0;
+    while (url && pages < maxPagesPerArtist) {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) break;
+      const json = (await res.json()) as SearchPage;
+      for (const id of orderedItemIds(json)) {
+        const label = await rijksArtistLabelForPool(id);
+        await sleep(40);
+        if (!popularPoolSearchHitMatchesArtist(description, label)) continue;
+        const composite = `rijks:${id}`;
+        if (seen.has(composite)) continue;
+        seen.add(composite);
+        out.push({ compositeObjectId: composite, poolArtist: description });
+      }
+      pages++;
+      url = json.next?.id?.trim() ?? null;
+      await sleep(40);
+    }
+    await sleep(40);
+  }
+  return out;
 }
 
 async function rijksSearchIdsForDescription(

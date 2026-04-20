@@ -1,4 +1,7 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import type { WallSlotPayload } from "./types";
 
 /** National Gallery, London — Elasticsearch + collection pages (no API key). */
@@ -47,6 +50,53 @@ const OBJECTS_WITH_IMAGE_QUERY = {
   },
 } as const;
 
+/**
+ * Extra ES passes (union into the pool). The public index has a hard ceiling (~2.6k
+ * objects with `public_image` + `multimedia`); keywords mainly widen overlap for
+ * future index growth and catch any records the plain sort walk might miss.
+ * Disable: `NGL_POOL_KEYWORD_SUPPLEMENT=0`.
+ */
+const NGL_POOL_SUPPLEMENT_MATCH_FIELDS = [
+  "title.value",
+  "creation.attribution.value",
+  "creation.maker.summary.title",
+] as const;
+
+const NGL_POOL_SUPPLEMENT_TERMS = [
+  "portrait",
+  "landscape",
+  "still life",
+  "figure study",
+  "drawing",
+  "painting",
+  "watercolour watercolor",
+  "oil",
+  "etching engraving",
+  "photograph photography",
+  "miniature",
+  "religious",
+  "mythological",
+  "allegory",
+] as const;
+
+function nglPoolQueryTitleMatch(term: string): Record<string, unknown> {
+  return {
+    bool: {
+      filter: [...OBJECTS_WITH_IMAGE_QUERY.bool.filter],
+      must: [
+        {
+          multi_match: {
+            query: term,
+            type: "best_fields",
+            operator: "or",
+            fields: [...NGL_POOL_SUPPLEMENT_MATCH_FIELDS],
+          },
+        },
+      ],
+    },
+  };
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -87,7 +137,7 @@ function extractTitle(src: NglHitSource): string {
   return "Untitled";
 }
 
-function extractArtist(src: NglHitSource): string {
+export function extractArtistFromNglHit(src: NglHitSource): string {
   const creation = src.creation?.[0];
   if (!creation) return "";
   const makers = creation.maker;
@@ -162,7 +212,7 @@ function wallSlotFromSource(
     source: "ngl",
     objectId: uid,
     title: extractTitle(src),
-    artist: extractArtist(src),
+    artist: extractArtistFromNglHit(src),
     imageUrl,
     objectUrl: `https://data.ng.ac.uk/${encodeURIComponent(uid)}`,
     objectDate: extractObjectDate(src),
@@ -193,25 +243,20 @@ export async function fetchNglObject(
   return wallSlotFromSource(uid, hit);
 }
 
-/**
- * Paginates Elasticsearch (`public_image` + `multimedia`) and stores object
- * PIDs. No API key. Run via `npm run art-pool:build -- --only ngl`.
- */
-export async function collectNglObjectIdsForPool(): Promise<string[]> {
-  const all = new Set<string>();
+async function nglPoolScrollQueryIntoMap(
+  byUid: Map<string, string | null>,
+  query: Record<string, unknown>,
+): Promise<boolean> {
   const pageSize = 100;
   let total = 0;
   try {
     const first = await esSearch<NglHitSource>(
-      {
-        size: 0,
-        query: OBJECTS_WITH_IMAGE_QUERY,
-      },
+      { size: 0, query },
       { cache: "no-store" },
     );
     total = first.hits.total.value;
   } catch {
-    return [];
+    return false;
   }
 
   for (let from = 0; from < total; from += pageSize) {
@@ -221,8 +266,8 @@ export async function collectNglObjectIdsForPool(): Promise<string[]> {
         {
           from,
           size: pageSize,
-          query: OBJECTS_WITH_IMAGE_QUERY,
-          _source: ["@admin.uid"],
+          query,
+          _source: ["@admin.uid", "creation"],
           sort: [{ "@admin.uid": "asc" }],
         },
         { cache: "no-store" },
@@ -231,13 +276,118 @@ export async function collectNglObjectIdsForPool(): Promise<string[]> {
       break;
     }
     for (const h of json.hits.hits) {
-      const uid = h._source?.["@admin"]?.uid;
-      if (uid) all.add(uid);
+      const src = h._source;
+      const uid = src?.["@admin"]?.uid;
+      if (!uid) continue;
+      if (!byUid.has(uid)) {
+        const art = src ? extractArtistFromNglHit(src).trim() || null : null;
+        byUid.set(uid, art);
+      }
+    }
+    await sleep(40);
+  }
+  return true;
+}
+
+/**
+ * Paginates Elasticsearch (`public_image` + `multimedia`) and stores object
+ * PIDs. No API key. Run via `npm run art-pool:build -- --only ngl`.
+ */
+export async function collectNglObjectIdsForPool(): Promise<ArtPoolIngestRow[]> {
+  const byUid = new Map<string, string | null>();
+
+  const mainOk = await nglPoolScrollQueryIntoMap(
+    byUid,
+    OBJECTS_WITH_IMAGE_QUERY,
+  );
+  if (!mainOk) return [];
+
+  if (process.env.NGL_POOL_KEYWORD_SUPPLEMENT?.trim() !== "0") {
+    for (const term of NGL_POOL_SUPPLEMENT_TERMS) {
+      await nglPoolScrollQueryIntoMap(byUid, nglPoolQueryTitleMatch(term));
+      await sleep(35);
+    }
+  }
+
+  return [...byUid.entries()].map(([objectId, poolArtist]) => ({
+    objectId,
+    poolArtist,
+  }));
+}
+
+/** ES `multi_match` on maker / attribution for each artist (objects with public images only). */
+export async function collectNglObjectIdsForPopularPool(
+  artistNames: readonly string[],
+  maxPagesPerName = 25,
+): Promise<PopularPoolIngestRow[]> {
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<string>();
+  const pageSize = 100;
+  const filterClauses = [...OBJECTS_WITH_IMAGE_QUERY.bool.filter];
+
+  for (const raw of artistNames) {
+    const name = raw.trim();
+    if (!name) continue;
+    const query = {
+      bool: {
+        filter: filterClauses,
+        must: [
+          {
+            multi_match: {
+              query: name,
+              type: "best_fields",
+              operator: "and",
+              fields: [
+                "creation.maker.summary.title",
+                "creation.attribution.value",
+              ],
+            },
+          },
+        ],
+      },
+    };
+
+    let from = 0;
+    for (let p = 0; p < maxPagesPerName; p++) {
+      let json: EsSearchResponse<NglHitSource>;
+      try {
+        json = await esSearch<NglHitSource>(
+          {
+            from,
+            size: pageSize,
+            query,
+            _source: ["@admin.uid", "creation"],
+          },
+          { cache: "no-store" },
+        );
+      } catch {
+        break;
+      }
+      const hits = json.hits.hits;
+      if (hits.length === 0) break;
+      for (const h of hits) {
+        const src = h._source;
+        const uid = src?.["@admin"]?.uid;
+        if (!uid) continue;
+        if (
+          !popularPoolSearchHitMatchesArtist(
+            name,
+            src ? extractArtistFromNglHit(src) : "",
+          )
+        )
+          continue;
+        const composite = `ngl:${uid}`;
+        if (seen.has(composite)) continue;
+        seen.add(composite);
+        out.push({ compositeObjectId: composite, poolArtist: name });
+      }
+      from += pageSize;
+      await sleep(40);
     }
     await sleep(40);
   }
 
-  return [...all];
+  return out;
 }
 
 async function pickRandomNglId(exclude: Set<string>): Promise<string | null> {

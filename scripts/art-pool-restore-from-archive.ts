@@ -24,8 +24,8 @@ async function main() {
   await prisma.$executeRawUnsafe(`TRUNCATE "ArtPoolEntry"`);
 
   await prisma.$executeRaw`
-    INSERT INTO "ArtPoolEntry" ("id", "source", "objectId", "createdAt")
-    SELECT "id", "source", "objectId", "createdAt" FROM "ArtPoolArchive"
+    INSERT INTO "ArtPoolEntry" ("id", "source", "objectId", "poolArtist", "createdAt")
+    SELECT "id", "source", "objectId", "poolArtist", "createdAt" FROM "ArtPoolArchive"
   `;
 
   const restored = await prisma.artPoolEntry.count();

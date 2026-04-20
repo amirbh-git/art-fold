@@ -1,4 +1,8 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import { pickMatchingPopularArtistName } from "@/lib/art-sources/popular-pool-match";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import { SEARCH_TERMS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
@@ -109,15 +113,19 @@ function listRecords(json: WhitneyListResponse): WhitneyArtworkResource[] {
  */
 export async function collectWhitneyObjectIdsForPool(
   maxPages?: number,
-): Promise<number[]> {
-  const all = new Set<number>();
+): Promise<ArtPoolIngestRow[]> {
+  const byId = new Map<number, string | null>();
 
   const ingest = (json: WhitneyListResponse): void => {
     for (const row of listRecords(json)) {
       const a = row.attributes;
       if (!artworkImageUrl(a)) continue;
       const id = a?.tms_id ?? a?.id;
-      if (typeof id === "number" && Number.isFinite(id)) all.add(id);
+      if (typeof id !== "number" || !Number.isFinite(id)) continue;
+      if (!byId.has(id)) {
+        const art = (a?.display_artist_text ?? "").trim() || null;
+        byId.set(id, art);
+      }
     }
   };
 
@@ -157,7 +165,74 @@ export async function collectWhitneyObjectIdsForPool(
     ingest(json);
   }
 
-  return [...all];
+  return [...byId.entries()].map(([objectId, poolArtist]) => ({
+    objectId: String(objectId),
+    poolArtist,
+  }));
+}
+
+/** Paginates the collection and keeps TMS ids whose `display_artist_text` matches the list. */
+export async function collectWhitneyObjectIdsForPopularPool(
+  artistNames: readonly string[],
+  maxPages = 900,
+): Promise<PopularPoolIngestRow[]> {
+  if (artistNames.length === 0) return [];
+
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<number>();
+
+  const ingest = (json: WhitneyListResponse): void => {
+    for (const row of listRecords(json)) {
+      const a = row.attributes;
+      if (!artworkImageUrl(a)) continue;
+      const id = a?.tms_id ?? a?.id;
+      if (typeof id !== "number" || !Number.isFinite(id)) continue;
+      const artist = (a?.display_artist_text ?? "").trim();
+      const canon = pickMatchingPopularArtistName(artist);
+      if (!canon) continue;
+      if (!popularPoolSearchHitMatchesArtist(canon, artist)) continue;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({
+        compositeObjectId: `whitney:${id}`,
+        poolArtist: canon,
+      });
+    }
+  };
+
+  const listParams = (): URLSearchParams => {
+    const p = new URLSearchParams();
+    p.set("q[s]", "tms_id+asc");
+    return p;
+  };
+
+  const firstParams = listParams();
+  firstParams.set("page", "1");
+  const firstRes = await fetch(`${WHITNEY_BASE}?${firstParams}`, {
+    cache: "no-store",
+  });
+  if (!firstRes.ok) return [];
+  const firstJson = (await firstRes.json()) as WhitneyListResponse;
+  const total = firstJson.meta?.total ?? 0;
+  if (total <= 0) return [];
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const limit = Math.min(totalPages, Math.max(1, maxPages));
+
+  ingest(firstJson);
+  for (let page = 2; page <= limit; page++) {
+    await sleep(50);
+    const params = listParams();
+    params.set("page", String(page));
+    const res = await fetch(`${WHITNEY_BASE}?${params}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) break;
+    const json = (await res.json()) as WhitneyListResponse;
+    ingest(json);
+  }
+
+  return out;
 }
 
 async function whitneySearchIdsByTitle(q: string): Promise<number[]> {

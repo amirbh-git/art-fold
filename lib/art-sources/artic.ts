@@ -1,4 +1,7 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import { SEARCH_TERMS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
@@ -89,8 +92,8 @@ function sleep(ms: number): Promise<void> {
 /** Paginated AIC search IDs for the art pool (`npm run art-pool:build`). */
 export async function collectArticObjectIdsForPool(
   maxPagesPerTerm = 12,
-): Promise<number[]> {
-  const all = new Set<number>();
+): Promise<ArtPoolIngestRow[]> {
+  const byId = new Map<number, string | null>();
   const fields =
     "id,title,artist_display,image_id,date_display,medium_display";
   for (const q of SEARCH_TERMS) {
@@ -109,14 +112,63 @@ export async function collectArticObjectIdsForPool(
       const json = (await res.json()) as SearchResponse;
       totalPages = json.pagination?.total_pages ?? 1;
       for (const row of json.data ?? []) {
-        if (row.id != null && row.image_id) all.add(row.id);
+        if (row.id == null || !row.image_id) continue;
+        if (!byId.has(row.id)) {
+          const art = (row.artist_display ?? "").trim() || null;
+          byId.set(row.id, art);
+        }
       }
       page++;
       await sleep(45);
     } while (page <= totalPages && page <= maxPagesPerTerm);
     await sleep(45);
   }
-  return [...all];
+  return [...byId.entries()].map(([id, poolArtist]) => ({
+    objectId: String(id),
+    poolArtist,
+  }));
+}
+
+/** Paginated AIC search per artist for the `popular` pool. */
+export async function collectArticObjectIdsForPopularPool(
+  artistNames: readonly string[],
+  maxPagesPerName = 10,
+): Promise<PopularPoolIngestRow[]> {
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<string>();
+  const fields =
+    "id,title,artist_display,image_id,date_display,medium_display";
+  for (const raw of artistNames) {
+    const q = raw.trim();
+    if (!q) continue;
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const params = new URLSearchParams();
+      params.set("q", q);
+      params.set("fields", fields);
+      params.set("limit", "100");
+      params.set("page", String(page));
+      const res = await fetch(`${AIC_BASE}/artworks/search?${params}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) break;
+      const json = (await res.json()) as SearchResponse;
+      totalPages = json.pagination?.total_pages ?? 1;
+      for (const row of json.data ?? []) {
+        if (row.id == null || !row.image_id) continue;
+        if (!popularPoolSearchHitMatchesArtist(q, row.artist_display)) continue;
+        const composite = `artic:${row.id}`;
+        if (seen.has(composite)) continue;
+        seen.add(composite);
+        out.push({ compositeObjectId: composite, poolArtist: q });
+      }
+      page++;
+      await sleep(45);
+    } while (page <= totalPages && page <= maxPagesPerName);
+    await sleep(45);
+  }
+  return out;
 }
 
 async function articSearchIds(q: string): Promise<number[]> {

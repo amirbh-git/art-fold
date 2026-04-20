@@ -1,4 +1,7 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import type { WallSlotPayload } from "./types";
 
 /**
@@ -23,7 +26,9 @@ type SparqlJson = {
   results?: {
     bindings?: Array<{
       s?: { type?: string; value?: string };
+      lab?: { type?: string; value?: string; datatype?: string };
       c?: { type?: string; value?: string; datatype?: string };
+      artist?: { type?: string; value?: string; datatype?: string };
     }>;
   };
 };
@@ -68,14 +73,19 @@ SELECT (COUNT(DISTINCT ?s) AS ?c) WHERE {
 }`;
 }
 
+/**
+ * Getty rejects long queries on GET (400); batched artist VALUES must use POST.
+ */
 async function sparqlJson(query: string): Promise<SparqlJson> {
-  const res = await fetch(
-    `${SPARQL_URL}?${new URLSearchParams({ query })}`,
-    {
-      headers: { Accept: "application/sparql-results+json" },
-      cache: "no-store",
+  const res = await fetch(SPARQL_URL, {
+    method: "POST",
+    headers: {
+      Accept: "application/sparql-results+json",
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
     },
-  );
+    body: new URLSearchParams({ query }),
+    cache: "no-store",
+  });
   if (!res.ok) throw new Error(`Getty SPARQL ${res.status}`);
   return (await res.json()) as SparqlJson;
 }
@@ -88,6 +98,37 @@ function bindingsToObjectUris(json: SparqlJson): string[] {
     if (u) out.push(u);
   }
   return out;
+}
+
+/** Batched producer labels (VALUES) — fast vs global GROUP BY on the full graph. */
+function sparqlArtistLabelsForObjectUris(uris: string[]): string {
+  const vals = uris.map((u) => `<${u}>`).join(" ");
+  return `PREFIX crm: <http://www.cidoc-crm.org/cidoc-crm/>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?s (SAMPLE(?lab) AS ?artist) WHERE {
+  VALUES ?s { ${vals} }
+  ?s crm:P108i_was_produced_by ?root .
+  {
+    ?root crm:P14_carried_out_by ?who .
+  } UNION {
+    ?root crm:P9_consists_of+ ?sub .
+    ?sub crm:P14_carried_out_by ?who .
+  }
+  { ?who skos:prefLabel ?lab . } UNION { ?who rdfs:label ?lab . }
+} GROUP BY ?s`;
+}
+
+function bindingsToArtistBySubject(json: SparqlJson): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const row of json.results?.bindings ?? []) {
+    const subj = row.s?.value?.trim();
+    const lit = row.artist?.value?.trim();
+    if (!subj || !lit) continue;
+    if (lit.toLowerCase() === "unknown") continue;
+    m.set(subj, lit);
+  }
+  return m;
 }
 
 async function fetchArtworkCount(): Promise<number> {
@@ -126,16 +167,56 @@ function getPreferredTitle(obj: GettyJson): string | null {
   return null;
 }
 
+function isUnknownArtistLabel(s: string): boolean {
+  return s.trim().toLowerCase() === "unknown";
+}
+
+/**
+ * Linked Art `produced_by` (Production): agents on `carried_out_by`, including nested
+ * `part` sub-productions (same graph shape as `crm:P9_consists_of` in SPARQL).
+ */
+function collectArtistLabelsFromProduction(
+  prod: GettyJson,
+  labels: string[],
+): void {
+  if (!prod || typeof prod !== "object") return;
+  const cob = prod["carried_out_by"];
+  const agents: GettyJson[] = Array.isArray(cob)
+    ? (cob as GettyJson[])
+    : cob && typeof cob === "object"
+      ? [cob as GettyJson]
+      : [];
+  for (const agent of agents) {
+    if (!agent || typeof agent !== "object") continue;
+    const lab = agent["_label"];
+    if (typeof lab === "string" && lab.trim() && !isUnknownArtistLabel(lab)) {
+      labels.push(lab.trim());
+    }
+  }
+  const parts = prod["part"];
+  if (Array.isArray(parts)) {
+    for (const p of parts) {
+      collectArtistLabelsFromProduction(p as GettyJson, labels);
+    }
+  }
+}
+
+/**
+ * Linked Art `produced_by` (Production) includes `carried_out_by` agents with `_label`.
+ * The field may be one object or an array; each production may list multiple agents.
+ */
 function getArtistLabel(obj: GettyJson): string {
   const pb = obj["produced_by"];
-  const prod = Array.isArray(pb) ? pb[0] : pb;
-  if (!prod || typeof prod !== "object") return "";
-  const p = prod as GettyJson;
-  const cob = p["carried_out_by"];
-  if (!Array.isArray(cob) || cob.length === 0) return "";
-  const person = cob[0] as GettyJson;
-  const label = person["_label"];
-  return typeof label === "string" ? label.trim() : "";
+  const productions: GettyJson[] = Array.isArray(pb)
+    ? (pb as GettyJson[])
+    : pb && typeof pb === "object"
+      ? [pb as GettyJson]
+      : [];
+  const labels: string[] = [];
+  for (const prod of productions) {
+    collectArtistLabelsFromProduction(prod, labels);
+  }
+  return [...new Set(labels)].join("; ");
 }
 
 function getObjectDate(obj: GettyJson): string | undefined {
@@ -276,11 +357,14 @@ function parseMaxPages(): number {
   return n;
 }
 
-export async function collectGettyObjectIdsForPool(): Promise<string[]> {
+const GETTY_ARTIST_VALUES_CHUNK =
+  Number.parseInt(process.env.GETTY_POOL_ARTIST_CHUNK ?? "35", 10) || 35;
+
+export async function collectGettyObjectIdsForPool(): Promise<ArtPoolIngestRow[]> {
   const pageSize = 200;
   const maxPages = parseMaxPages();
 
-  const all = new Set<string>();
+  const out: ArtPoolIngestRow[] = [];
   let offset = 0;
   let pages = 0;
 
@@ -293,16 +377,92 @@ export async function collectGettyObjectIdsForPool(): Promise<string[]> {
     }
     const uris = bindingsToObjectUris(json);
     if (uris.length === 0) break;
-    for (const uri of uris) {
-      const id = objectUuidFromGettyUri(uri);
-      if (id) all.add(id);
+
+    for (let i = 0; i < uris.length; i += GETTY_ARTIST_VALUES_CHUNK) {
+      const chunk = uris.slice(i, i + GETTY_ARTIST_VALUES_CHUNK);
+      let labels = new Map<string, string>();
+      try {
+        const aj = await sparqlJson(sparqlArtistLabelsForObjectUris(chunk));
+        labels = bindingsToArtistBySubject(aj);
+      } catch {
+        labels = new Map();
+      }
+      for (const uri of chunk) {
+        const id = objectUuidFromGettyUri(uri);
+        if (!id) continue;
+        const lab = labels.get(uri) ?? null;
+        out.push({ objectId: id, poolArtist: lab });
+      }
+      await sleep(250);
     }
+
     offset += pageSize;
     pages++;
     await sleep(400);
   }
 
-  return [...all];
+  return out;
+}
+
+function sparqlEscapeForContains(needle: string): string {
+  return needle
+    .toLowerCase()
+    .trim()
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
+}
+
+/**
+ * SPARQL filter on producer `skos:prefLabel` / `rdfs:label` (best-effort per artist).
+ * Returns empty when the endpoint shape does not match.
+ */
+export async function collectGettyObjectIdsForPopularPool(
+  artistNames: readonly string[],
+): Promise<PopularPoolIngestRow[]> {
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<string>();
+  for (const raw of artistNames) {
+    const canon = raw.trim();
+    const needle = sparqlEscapeForContains(raw);
+    if (needle.length < 2) continue;
+    const q = `PREFIX crm: <http://www.cidoc-crm.org/cidoc-crm/>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT DISTINCT ?s ?lab WHERE {
+  ?s crm:P2_has_type <${AAT_ARTWORK}> .
+  ?s crm:P138i_has_representation ?img .
+  FILTER (CONTAINS(STR(?img), "iiif/image"))
+  ?s crm:P108i_was_produced_by ?root .
+  {
+    ?root crm:P14_carried_out_by ?who .
+  } UNION {
+    ?root crm:P9_consists_of+ ?sub .
+    ?sub crm:P14_carried_out_by ?who .
+  }
+  { ?who skos:prefLabel ?lab . } UNION { ?who rdfs:label ?lab . }
+  FILTER (CONTAINS(LCASE(STR(?lab)), "${needle}"))
+}
+LIMIT 400`;
+    try {
+      const json = await sparqlJson(q);
+      for (const row of json.results?.bindings ?? []) {
+        const u = row.s?.value?.trim();
+        const lab = row.lab?.value?.trim();
+        if (!u || !lab) continue;
+        if (!popularPoolSearchHitMatchesArtist(canon, lab)) continue;
+        const id = objectUuidFromGettyUri(u);
+        if (!id) continue;
+        const composite = `getty:${id}`;
+        if (seen.has(composite)) continue;
+        seen.add(composite);
+        out.push({ compositeObjectId: composite, poolArtist: canon });
+      }
+    } catch {
+      /* ignore per-artist failures */
+    }
+    await sleep(400);
+  }
+  return out;
 }
 
 async function pickRandomGettyId(exclude: Set<string>): Promise<string | null> {

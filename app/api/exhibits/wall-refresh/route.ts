@@ -47,7 +47,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const slots = await getRandomArtSlots(count, exclude);
+    const { slots } = await getRandomArtSlots(count, exclude);
     if (slots.length < count) {
       return NextResponse.json(
         { error: "Could not find enough matching works. Try again." },

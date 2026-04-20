@@ -1,4 +1,7 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import { SEARCH_TERMS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
@@ -9,6 +12,8 @@ type VamSearchRecord = {
   systemNumber?: string;
   _primaryImageId?: string;
   _primaryTitle?: string;
+  /** Present on search hits; primary maker display string for pool ingest. */
+  _primaryMaker?: { name?: string; association?: string };
 };
 
 type VamSearchResponse = {
@@ -19,6 +24,11 @@ type VamSearchResponse = {
     page_size?: number;
   };
   records?: VamSearchRecord[];
+};
+
+type VamMakerRow = {
+  name?: { text?: string };
+  association?: { text?: string };
 };
 
 type VamObjectResponse = {
@@ -33,10 +43,11 @@ type VamObjectResponse = {
     systemNumber?: string;
     objectType?: string;
     titles?: Array<{ title?: string }>;
-    artistMakerPerson?: Array<{
-      name?: { text?: string };
-      association?: { text?: string };
-    }>;
+    artistMakerPerson?: VamMakerRow[];
+    /** Same shape as `artistMakerPerson`; used for some object types. */
+    artistMakerPeople?: VamMakerRow[];
+    /** Studios / manufacturers (used when no individual is listed). */
+    artistMakerOrganisations?: VamMakerRow[];
     creditLine?: string;
     materialsAndTechniques?: string;
     dimensions?: Array<{
@@ -75,14 +86,51 @@ function titleFromRecord(rec: VamObjectResponse["record"]): string {
   return "Untitled";
 }
 
+/** V&A Collections API — `association.text` describes the person's role. */
+const VAM_ASSOCIATION_PRIORITY: ReadonlyArray<RegExp> = [
+  /\bartist\b/i,
+  /\bdesigner\b/i,
+  /\bmaker\b/i,
+  /\bmodeller\b/i,
+  /\bmodeler\b/i,
+  /\bpainter\b/i,
+  /\bprintmaker\b/i,
+  /\bphotographer\b/i,
+  /\barchitect\b/i,
+  /\bsculptor\b/i,
+  /\bweaver\b/i,
+  /\bpatron\b/i,
+];
+
+function associationRank(associationText: string): number {
+  const t = associationText.toLowerCase();
+  for (let i = 0; i < VAM_ASSOCIATION_PRIORITY.length; i++) {
+    if (VAM_ASSOCIATION_PRIORITY[i]!.test(t)) return i;
+  }
+  return VAM_ASSOCIATION_PRIORITY.length;
+}
+
+function namesFromMakerRows(rows: VamMakerRow[] | undefined): string[] {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  const sorted = [...rows].sort(
+    (a, b) =>
+      associationRank(a.association?.text ?? "") -
+      associationRank(b.association?.text ?? ""),
+  );
+  const names = sorted
+    .map((p) => (p.name?.text ?? "").trim().replace(/,\s*$/, ""))
+    .filter(Boolean);
+  return [...new Set(names)];
+}
+
 function artistFromRecord(rec: VamObjectResponse["record"]): string {
-  const people = rec?.artistMakerPerson;
-  if (!Array.isArray(people) || !people.length) return "";
-  const maker =
-    people.find((p) =>
-      (p.association?.text ?? "").toLowerCase().includes("maker"),
-    ) ?? people[0];
-  return (maker?.name?.text ?? "").trim();
+  const fromPerson = namesFromMakerRows(rec?.artistMakerPerson);
+  if (fromPerson.length > 0) return fromPerson.join("; ");
+  const fromPeople = namesFromMakerRows(rec?.artistMakerPeople);
+  if (fromPeople.length > 0) return fromPeople.join("; ");
+  const fromOrgs = namesFromMakerRows(rec?.artistMakerOrganisations);
+  if (fromOrgs.length > 0) return fromOrgs.join("; ");
+  return "";
 }
 
 function dimensionsFromRecord(rec: VamObjectResponse["record"]): string | undefined {
@@ -154,8 +202,13 @@ const POOL_MAX_PAGES = 100;
  * Paginates `images_exist=1` up to the API limit (100 pages × 100 rows = 10k IDs
  * per query). The V&A API does not return pages beyond 100 for a single search.
  */
-export async function collectVamObjectIdsForPool(): Promise<string[]> {
-  const all = new Set<string>();
+function poolArtistFromVamSearchRecord(r: VamSearchRecord): string | null {
+  const n = r._primaryMaker?.name?.trim();
+  return n || null;
+}
+
+export async function collectVamObjectIdsForPool(): Promise<ArtPoolIngestRow[]> {
+  const byId = new Map<string, string | null>();
 
   for (let page = 1; page <= POOL_MAX_PAGES; page++) {
     const params = new URLSearchParams();
@@ -169,14 +222,62 @@ export async function collectVamObjectIdsForPool(): Promise<string[]> {
     const json = (await res.json()) as VamSearchResponse;
     for (const r of json.records ?? []) {
       const id = r.systemNumber?.trim();
-      if (id && r._primaryImageId) all.add(id);
+      if (!id || !r._primaryImageId) continue;
+      if (!byId.has(id)) {
+        byId.set(id, poolArtistFromVamSearchRecord(r));
+      }
     }
     const pages = json.info?.pages ?? POOL_MAX_PAGES;
     if (page >= pages) break;
     await sleep(45);
   }
 
-  return [...all];
+  return [...byId.entries()].map(([objectId, poolArtist]) => ({
+    objectId,
+    poolArtist,
+  }));
+}
+
+/** Keyword search per artist (images only) for the `popular` pool. */
+export async function collectVamObjectIdsForPopularPool(
+  artistNames: readonly string[],
+  maxPagesPerName = 20,
+): Promise<PopularPoolIngestRow[]> {
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<string>();
+  for (const raw of artistNames) {
+    const q = raw.trim();
+    if (!q) continue;
+    for (let page = 1; page <= maxPagesPerName; page++) {
+      const params = new URLSearchParams();
+      params.set("q", q);
+      params.set("images_exist", "1");
+      params.set("page_size", String(POOL_PAGE_SIZE));
+      params.set("page", String(page));
+      const res = await fetch(`${VAM_BASE}/objects/search?${params}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) break;
+      const json = (await res.json()) as VamSearchResponse;
+      const rows = json.records ?? [];
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        const id = r.systemNumber?.trim();
+        if (!id || !r._primaryImageId) continue;
+        if (!popularPoolSearchHitMatchesArtist(q, poolArtistFromVamSearchRecord(r) ?? ""))
+          continue;
+        const composite = `vam:${id}`;
+        if (seen.has(composite)) continue;
+        seen.add(composite);
+        out.push({ compositeObjectId: composite, poolArtist: q });
+      }
+      const pages = json.info?.pages ?? maxPagesPerName;
+      if (page >= pages) break;
+      await sleep(45);
+    }
+    await sleep(45);
+  }
+  return out;
 }
 
 async function vamSearchPageIds(

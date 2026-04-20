@@ -48,6 +48,7 @@ async function main() {
           id: r.id,
           source: r.source,
           objectId: r.objectId,
+          poolArtist: r.poolArtist,
           createdAt: r.createdAt,
         })),
       });

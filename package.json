@@ -24,6 +24,8 @@
     "art-pool:build:getty": "tsx scripts/build-art-pool.ts --only getty",
     "art-pool:topup:getty": "tsx scripts/build-art-pool.ts --only getty --append",
     "art-pool:build:met": "tsx scripts/build-art-pool.ts --only met",
+    "art-pool:enrich:met": "tsx scripts/build-art-pool.ts --only met --met-enrich-only",
+    "art-pool:build:met:test": "MET_POOL_QUICK_SEARCH=1 MET_POOL_TEST_FRACTION=0.01 MET_POOL_PROGRESS_EVERY_BATCHES=2 tsx scripts/build-art-pool.ts --only met --append",
     "art-pool:topup:met": "tsx scripts/build-art-pool.ts --only met --append",
     "art-pool:topup:ngl": "tsx scripts/build-art-pool.ts --only ngl --append",
     "art-pool:build:vam": "tsx scripts/build-art-pool.ts --only vam",
@@ -37,8 +39,17 @@
     "art-pool:archive-full": "tsx scripts/art-pool-archive-full.ts",
     "art-pool:restore-from-archive": "tsx scripts/art-pool-restore-from-archive.ts",
     "art-pool:cap": "tsx scripts/art-pool-cap.ts",
+    "art-pool:cap-artist-share": "tsx scripts/art-pool-cap-artist-share.ts",
+    "art-pool:cap-harvard": "tsx scripts/art-pool-cap-artist-share.ts --source harvard --max-frac 0.01",
+    "art-pool:cap-vam-frith": "tsx scripts/art-pool-cap-artist-share.ts --source vam --artist-exact-name \"Francis Frith\" --artist-max-rows 130",
+    "art-pool:cap-popular-1k": "tsx scripts/art-pool-cap-artist-share.ts --source popular --cap-rows-per-artist 1000",
+    "art-pool:cap-popular-500": "tsx scripts/art-pool-cap-artist-share.ts --source popular --cap-rows-per-artist 500",
     "art-pool:clone-to-backup-db": "tsx scripts/art-pool-clone-to-backup-db.ts",
-    "benchmark:art-fetch": "tsx scripts/benchmark-art-fetch.ts"
+    "art-pool:export-csv": "tsx scripts/art-pool-export-csv.ts",
+    "art-pool:import-csv": "tsx scripts/art-pool-import-from-csv.ts",
+    "benchmark:art-fetch": "tsx scripts/benchmark-art-fetch.ts",
+    "art-pool:popular-counts": "tsx scripts/count-popular-pool-by-artist.ts --source popular",
+    "art-pool:artist-counts": "tsx scripts/count-popular-pool-by-artist.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.3.0",

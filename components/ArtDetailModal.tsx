@@ -81,7 +81,10 @@ export function ArtDetailModal({ card, onClose }: Props) {
             <DetailRow label="Dimensions" value={card.dimensions} />
             <DetailRow label="Department" value={card.department} />
             <DetailRow label="Credit" value={card.creditLine} />
-            <DetailRow label="Museum" value={museumDisplayName(card.source)} />
+            <DetailRow
+              label="Museum"
+              value={museumDisplayName(card.source, card.objectId)}
+            />
           </dl>
 
           {card.objectUrl && (
@@ -91,7 +94,7 @@ export function ArtDetailModal({ card, onClose }: Props) {
               rel="noreferrer"
               className="mt-4 inline-block text-sm font-medium text-neutral-700 underline underline-offset-2 hover:text-neutral-900"
             >
-              {collectionLinkText(card.source)}
+              {collectionLinkText(card.source, card.objectId)}
             </a>
           )}
         </div>

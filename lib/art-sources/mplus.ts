@@ -1,4 +1,8 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import { pickMatchingPopularArtistName } from "@/lib/art-sources/popular-pool-match";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import type { WallSlotPayload } from "./types";
 
 /**
@@ -161,14 +165,85 @@ function parseMaxPages(): number {
   return n;
 }
 
+function parseKeywordMaxPages(): number {
+  const raw = process.env.MPLUS_POOL_KEYWORD_MAX_PAGES?.trim();
+  if (raw === undefined || raw === "") return 80;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 80;
+  return Math.min(n, 120);
+}
+
+/** Extra `objects(keyword: …)` passes to grow the pool beyond the default id crawl. */
+const MPLUS_POOL_KEYWORD_SEEDS = [
+  "painting",
+  "design",
+  "photography",
+  "sculpture",
+  "drawing",
+  "print",
+  "Hong Kong",
+  "China",
+  "ceramic",
+  "installation",
+  "video",
+  "portrait",
+  "landscape",
+  "contemporary",
+  "fashion",
+  "poster",
+  "ink",
+  "oil",
+  "watercolour",
+  "digital",
+  "mixed media",
+  "art",
+  "museum",
+  "work",
+  "Asia",
+  "Japan",
+  "abstract",
+  "architecture",
+  "furniture",
+  "textile",
+  "graphic",
+  "bronze",
+  "paper",
+  "canvas",
+  "Taiwan",
+  "Southeast Asia",
+  "Europe",
+  "modern",
+  "minimal",
+  "archive",
+  "film",
+  "object",
+] as const;
+
+function ingestMplusObjectRows(
+  rows: MplusObjectRow[],
+  sink: Map<string, string | null>,
+): void {
+  for (const row of rows) {
+    const oid = row.id;
+    if (typeof oid !== "number" || !Number.isFinite(oid)) continue;
+    const hasImage = row.images?.some((im) => (im.altText ?? "").trim());
+    if (!hasImage) continue;
+    const art = artistFromConstituents(row.constituents).trim() || null;
+    const sid = String(oid);
+    if (!sink.has(sid)) sink.set(sid, art);
+    else if (!sink.get(sid) && art) sink.set(sid, art);
+  }
+}
+
 /**
  * Paginates `objects` (publicAccess) and keeps IDs that have at least one image record.
  * Default **176** pages × 100 ≈ full public index (~17.6k). Override with `MPLUS_POOL_MAX_PAGES`.
+ * Adds keyword-indexed pages (`MPLUS_POOL_KEYWORD_SEEDS`, `MPLUS_POOL_KEYWORD_MAX_PAGES`).
  */
-export async function collectMplusObjectIdsForPool(): Promise<number[]> {
+export async function collectMplusObjectIdsForPool(): Promise<ArtPoolIngestRow[]> {
   const perPage = 100;
   const maxPages = parseMaxPages();
-  const all: number[] = [];
+  const byId = new Map<string, string | null>();
 
   const q = `query MplusObjects($page: Int!, $perPage: Int!) {
     objects(
@@ -180,13 +255,93 @@ export async function collectMplusObjectIdsForPool(): Promise<number[]> {
     ) {
       id
       images { altText }
+      constituents { name role isMakerOfObject }
     }
   }`;
 
   let page = 1;
   while (page <= maxPages) {
     const data = await mplusGraphql<{
-      objects: Array<{ id?: number; images?: Array<{ altText?: string | null }> }>;
+      objects: MplusObjectRow[];
+    }>(q, { page, perPage }, { pool: true });
+
+    const rows = data?.objects ?? [];
+    if (rows.length === 0) break;
+
+    ingestMplusObjectRows(rows, byId);
+
+    page++;
+    await sleep(120);
+  }
+
+  const qKw = `query MplusKw($page: Int!, $perPage: Int!, $kw: String!) {
+    objects(
+      page: $page
+      per_page: $perPage
+      publicAccess: true
+      sort: "asc"
+      sort_field: "id"
+      keyword: $kw
+    ) {
+      id
+      images { altText }
+      constituents { name role isMakerOfObject }
+    }
+  }`;
+
+  const kwMax = parseKeywordMaxPages();
+  for (const kw of MPLUS_POOL_KEYWORD_SEEDS) {
+    for (let p = 1; p <= kwMax; p++) {
+      const data = await mplusGraphql<{ objects: MplusObjectRow[] }>(
+        qKw,
+        { page: p, perPage, kw },
+        { pool: true },
+      );
+      const rows = data?.objects ?? [];
+      if (rows.length === 0) break;
+      ingestMplusObjectRows(rows, byId);
+      await sleep(120);
+    }
+    await sleep(120);
+  }
+
+  return [...byId.entries()].map(([objectId, poolArtist]) => ({
+    objectId,
+    poolArtist,
+  }));
+}
+
+/**
+ * Single paginated pass over public objects; keeps ids whose maker names match any list entry.
+ */
+export async function collectMplusObjectIdsForPopularPool(
+  artistNames: readonly string[],
+): Promise<PopularPoolIngestRow[]> {
+  if (artistNames.length === 0) return [];
+
+  const perPage = 100;
+  const maxPages = parseMaxPages();
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<number>();
+
+  const q = `query MplusPopular($page: Int!, $perPage: Int!) {
+    objects(
+      page: $page
+      per_page: $perPage
+      publicAccess: true
+      sort: "asc"
+      sort_field: "id"
+    ) {
+      id
+      images { altText }
+      constituents { name role isMakerOfObject }
+    }
+  }`;
+
+  let page = 1;
+  while (page <= maxPages) {
+    const data = await mplusGraphql<{
+      objects: MplusObjectRow[];
     }>(q, { page, perPage }, { pool: true });
 
     const rows = data?.objects ?? [];
@@ -196,14 +351,26 @@ export async function collectMplusObjectIdsForPool(): Promise<number[]> {
       const oid = row.id;
       if (typeof oid !== "number" || !Number.isFinite(oid)) continue;
       const hasImage = row.images?.some((im) => (im.altText ?? "").trim());
-      if (hasImage) all.push(oid);
+      if (!hasImage) continue;
+      const blob = (row.constituents ?? [])
+        .map((c) => (c?.name ?? "").trim())
+        .join(" ");
+      const canon = pickMatchingPopularArtistName(blob);
+      if (!canon) continue;
+      if (!popularPoolSearchHitMatchesArtist(canon, blob)) continue;
+      if (seen.has(oid)) continue;
+      seen.add(oid);
+      out.push({
+        compositeObjectId: `mplus:${oid}`,
+        poolArtist: canon,
+      });
     }
 
     page++;
     await sleep(120);
   }
 
-  return all;
+  return out;
 }
 
 async function pickRandomMplusId(exclude: Set<string>): Promise<string | null> {

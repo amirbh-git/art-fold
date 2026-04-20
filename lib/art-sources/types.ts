@@ -11,6 +11,8 @@ export const ART_SOURCE_IDS = [
   "mplus",
   "nma",
   "cooper",
+  /** Cross-museum pool; DB `objectId` is `realSource:realId` (e.g. `met:123`). */
+  "popular",
 ] as const;
 
 export type ArtSourceId = (typeof ART_SOURCE_IDS)[number];

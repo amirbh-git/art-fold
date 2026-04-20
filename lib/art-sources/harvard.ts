@@ -1,4 +1,7 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import { SEARCH_TERMS as KEYWORDS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
@@ -119,10 +122,10 @@ function sleep(ms: number): Promise<void> {
 /** Paginated Harvard object IDs for the art pool (`npm run art-pool:build`). Requires `HARVARD_ART_API_KEY`. */
 export async function collectHarvardObjectIdsForPool(
   maxPagesPerKeyword = 15,
-): Promise<number[]> {
+): Promise<ArtPoolIngestRow[]> {
   const key = harvardApiKey();
   if (!key) return [];
-  const all = new Set<number>();
+  const byId = new Map<number, string | null>();
   for (const keyword of KEYWORDS) {
     let page = 1;
     let totalPages = 1;
@@ -141,14 +144,66 @@ export async function collectHarvardObjectIdsForPool(
       totalPages = json.info?.pages ?? 1;
       for (const r of json.records ?? []) {
         const id = recordNumericId(r);
-        if (id != null) all.add(id);
+        if (id == null) continue;
+        if (!byId.has(id)) {
+          const art = artistFromPeople(r.people).trim() || null;
+          byId.set(id, art);
+        }
       }
       page++;
       await sleep(60);
     } while (page <= totalPages && page <= maxPagesPerKeyword);
     await sleep(60);
   }
-  return [...all];
+  return [...byId.entries()].map(([id, poolArtist]) => ({
+    objectId: String(id),
+    poolArtist,
+  }));
+}
+
+/** Keyword search per artist for the `popular` pool. Requires `HARVARD_ART_API_KEY`. */
+export async function collectHarvardObjectIdsForPopularPool(
+  artistNames: readonly string[],
+  maxPagesPerName = 12,
+): Promise<PopularPoolIngestRow[]> {
+  const key = harvardApiKey();
+  if (!key) return [];
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<string>();
+  for (const raw of artistNames) {
+    const keyword = raw.trim();
+    if (!keyword) continue;
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const params = new URLSearchParams();
+      params.set("apikey", key);
+      params.set("keyword", keyword);
+      params.set("hasimage", "1");
+      params.set("size", "100");
+      params.set("page", String(page));
+      const res = await fetch(`${HARVARD_BASE}/object?${params}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) break;
+      const json = (await res.json()) as HarvardListResponse;
+      totalPages = json.info?.pages ?? 1;
+      for (const r of json.records ?? []) {
+        const id = recordNumericId(r);
+        if (id == null) continue;
+        if (!popularPoolSearchHitMatchesArtist(keyword, artistFromPeople(r.people)))
+          continue;
+        const composite = `harvard:${id}`;
+        if (seen.has(composite)) continue;
+        seen.add(composite);
+        out.push({ compositeObjectId: composite, poolArtist: keyword });
+      }
+      page++;
+      await sleep(60);
+    } while (page <= totalPages && page <= maxPagesPerName);
+    await sleep(60);
+  }
+  return out;
 }
 
 async function harvardSearchIds(keyword: string): Promise<number[]> {

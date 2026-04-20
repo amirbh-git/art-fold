@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const slots = await getRandomArtSlots(SLOT_COUNT, new Set());
+    const { slots } = await getRandomArtSlots(SLOT_COUNT, new Set());
     if (slots.length < SLOT_COUNT) {
       return NextResponse.json(
         { error: "Could not find enough matching works. Try again." },

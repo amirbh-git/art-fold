@@ -1,4 +1,7 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import { SEARCH_TERMS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
@@ -8,16 +11,25 @@ type CmaImages = {
   web?: { url?: string };
 };
 
+type CmaCreator = {
+  description?: string;
+  role?: string;
+  use_in_caption?: boolean;
+};
+
 type CmaArtwork = {
   id?: number;
   title?: string;
   tombstone?: string;
+  /** Accession credit (distinct from full tombstone line). */
+  creditline?: string;
   creation_date?: string;
   technique?: string;
   measurements?: string;
   department?: string;
   url?: string;
   images?: CmaImages | null;
+  creators?: CmaCreator[];
 };
 
 type CmaListResponse = {
@@ -41,6 +53,21 @@ function imageFromArtwork(o: CmaArtwork): string | null {
   return u || null;
 }
 
+function artistFromClevelandArtwork(o: CmaArtwork): string {
+  const list = o.creators ?? [];
+  const caption = list.filter((c) => c.use_in_caption === true);
+  const artists = list.filter(
+    (c) => (c.role ?? "").toLowerCase() === "artist",
+  );
+  const pick =
+    caption.length > 0 ? caption : artists.length > 0 ? artists : list;
+  const parts = pick
+    .map((c) => (c.description ?? "").trim())
+    .filter(Boolean);
+  if (parts.length > 0) return parts.join("; ");
+  return "";
+}
+
 export async function fetchClevelandArtwork(
   id: string,
 ): Promise<WallSlotPayload | null> {
@@ -55,18 +82,20 @@ export async function fetchClevelandArtwork(
   if (!imageUrl) return null;
 
   const oid = String(o.id);
+  const credit =
+    (o.creditline ?? "").trim() || (o.tombstone ?? "").trim() || undefined;
   return {
     source: "cleveland",
     objectId: oid,
     title: (o.title ?? "Untitled").trim() || "Untitled",
-    artist: "",
+    artist: artistFromClevelandArtwork(o),
     imageUrl,
     objectUrl: (o.url ?? "").trim(),
     objectDate: (o.creation_date ?? "").trim() || undefined,
     medium: (o.technique ?? "").trim() || undefined,
     dimensions: (o.measurements ?? "").trim() || undefined,
     department: (o.department ?? "").trim() || undefined,
-    creditLine: (o.tombstone ?? "").trim() || undefined,
+    creditLine: credit,
   };
 }
 
@@ -77,8 +106,8 @@ function sleep(ms: number): Promise<void> {
 /** Paginated Cleveland Open Access IDs for the art pool (`npm run art-pool:build`). */
 export async function collectClevelandObjectIdsForPool(
   maxPagesPerQuery = 40,
-): Promise<number[]> {
-  const all = new Set<number>();
+): Promise<ArtPoolIngestRow[]> {
+  const byId = new Map<number, string | null>();
   const limit = 100;
   for (const q of SEARCH_TERMS) {
     const probe = new URLSearchParams();
@@ -106,14 +135,76 @@ export async function collectClevelandObjectIdsForPool(
       const rows = json.data ?? [];
       if (rows.length === 0) break;
       for (const r of rows) {
-        if (r.id != null && imageFromArtwork(r)) all.add(r.id);
+        if (r.id == null || !imageFromArtwork(r)) continue;
+        if (!byId.has(r.id)) {
+          const art = artistFromClevelandArtwork(r).trim() || null;
+          byId.set(r.id, art);
+        }
       }
       skip += limit;
       pages++;
     }
     await sleep(50);
   }
-  return [...all];
+  return [...byId.entries()].map(([id, poolArtist]) => ({
+    objectId: String(id),
+    poolArtist,
+  }));
+}
+
+/** Cleveland Open Access text search per artist for the `popular` pool. */
+export async function collectClevelandObjectIdsForPopularPool(
+  artistNames: readonly string[],
+  maxPagesPerName = 25,
+): Promise<PopularPoolIngestRow[]> {
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<string>();
+  const limit = 100;
+  for (const raw of artistNames) {
+    const q = raw.trim();
+    if (!q) continue;
+    const probe = new URLSearchParams();
+    probe.set("q", q);
+    probe.set("has_image", "1");
+    probe.set("limit", "1");
+    const probeRes = await fetch(`${CMA_BASE}/?${probe}`, {
+      cache: "no-store",
+    });
+    if (!probeRes.ok) {
+      await sleep(50);
+      continue;
+    }
+    const probeJson = (await probeRes.json()) as CmaListResponse;
+    const total = probeJson.info?.total ?? 0;
+    let skip = 0;
+    let pages = 0;
+    while (skip < total && pages < maxPagesPerName) {
+      const params = new URLSearchParams();
+      params.set("q", q);
+      params.set("has_image", "1");
+      params.set("limit", String(limit));
+      params.set("skip", String(skip));
+      const res = await fetch(`${CMA_BASE}/?${params}`, { cache: "no-store" });
+      await sleep(50);
+      if (!res.ok) break;
+      const json = (await res.json()) as CmaListResponse;
+      const rows = json.data ?? [];
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        if (r.id == null || !imageFromArtwork(r)) continue;
+        if (!popularPoolSearchHitMatchesArtist(q, artistFromClevelandArtwork(r)))
+          continue;
+        const composite = `cleveland:${r.id}`;
+        if (seen.has(composite)) continue;
+        seen.add(composite);
+        out.push({ compositeObjectId: composite, poolArtist: q });
+      }
+      skip += limit;
+      pages++;
+    }
+    await sleep(50);
+  }
+  return out;
 }
 
 async function clevelandSearchIds(q: string): Promise<number[]> {

@@ -1,4 +1,7 @@
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import { SEARCH_TERMS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
@@ -15,6 +18,8 @@ type NmaObject = {
   id?: string;
   title?: string;
   creator?: unknown;
+  /** Long-form context; sometimes names appear here when `creator` is empty. */
+  significanceStatement?: string;
   identifier?: string;
   medium?: unknown;
   extent?: {
@@ -102,6 +107,14 @@ function extractBestImageUrl(
   return out[0]!.url;
 }
 
+function nmaCreatorDescriptionLooksLikeName(s: string): boolean {
+  const t = s.trim();
+  if (t.length < 4 || t.length > 160) return false;
+  if (/^(of |after |copy |attributed|unknown|maker|production|original)/i.test(t))
+    return false;
+  return /[A-Za-z\u00C0-\u024F]{2,}/.test(t);
+}
+
 function formatArtist(creator: unknown): string {
   if (typeof creator === "string") return creator.trim();
   if (!Array.isArray(creator)) return "";
@@ -111,11 +124,63 @@ function formatArtist(creator: unknown): string {
       parts.push(c.trim());
     } else if (c && typeof c === "object") {
       const o = c as Record<string, unknown>;
-      const t = o.title ?? o.name;
+      const t = o.title ?? o.name ?? o.label ?? o.formattedName;
       if (typeof t === "string" && t.trim()) parts.push(t.trim());
+      const d = o.description;
+      if (typeof d === "string" && nmaCreatorDescriptionLooksLikeName(d)) {
+        parts.push(d.trim());
+      }
     }
   }
   return parts.filter(Boolean).join("; ");
+}
+
+/** Reject junk substrings from title/regex extraction. */
+const NMA_ATTRIBUTION_BLOCKLIST =
+  /^(the|unknown|unidentified|various|traditional|artist|maker|wedgwood|museum|collection|australian|european|english|british|american)\b/i;
+
+function nmaCleanAttributionCandidate(raw: string): string | null {
+  let name = raw
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\s+(in|from|circa|c\.|about|and|with)\s.*$/i, "")
+    .trim();
+  if (name.length < 4 || name.length > 100) return null;
+  if (NMA_ATTRIBUTION_BLOCKLIST.test(name)) return null;
+  return name;
+}
+
+/**
+ * NMA list/detail records often omit structured `creator` names; pull conservative
+ * hints from title / physicalDescription / significanceStatement.
+ */
+function nmaAttributionFromTombstoneText(o: NmaObject): string {
+  const title = (o.title ?? "").trim();
+  const phys = (o.physicalDescription ?? "").trim();
+  const sig = (o.significanceStatement ?? "").trim();
+  const blobs = [title, phys, sig].filter(Boolean);
+  const patterns: RegExp[] = [
+    /\bportrait(?:\s+miniature)?\s+of\s+([^,.;(\n]{3,90})/i,
+    /\bphotograph(?:ed)?\s+by\s+([^,.;(\n]{3,90})/i,
+    /\bpainted\s+by\s+([^,.;(\n]{3,90})/i,
+    /\battributed\s+to\s+([^,.;(\n]{3,90})/i,
+    /\bby\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,5})\b/,
+  ];
+  for (const text of blobs) {
+    for (const re of patterns) {
+      const m = text.match(re);
+      const hit = m?.[1] ? nmaCleanAttributionCandidate(m[1]) : null;
+      if (hit) return hit;
+    }
+  }
+  return "";
+}
+
+/** Structured `creator` when present; else best-effort text attribution. */
+export function nmaPoolArtistFromObject(o: NmaObject): string {
+  const structured = formatArtist(o.creator).trim();
+  if (structured) return structured;
+  return nmaAttributionFromTombstoneText(o);
 }
 
 function formatMedium(medium: unknown): string | undefined {
@@ -187,7 +252,7 @@ export async function fetchNmaObject(id: string): Promise<WallSlotPayload | null
     source: "nma",
     objectId: oid,
     title: titleRaw || "Untitled",
-    artist: formatArtist(o.creator),
+    artist: nmaPoolArtistFromObject(o),
     imageUrl,
     objectUrl: `https://collectionsearch.nma.gov.au/object/${encodeURIComponent(oid)}`,
     objectDate: formatObjectDate(o.temporal),
@@ -200,8 +265,8 @@ export async function fetchNmaObject(id: string): Promise<WallSlotPayload | null
 /** Paginated NMA object IDs (`text` + `media=*` returns `hasVersion` in list rows). */
 export async function collectNmaObjectIdsForPool(
   maxPagesPerQuery = 40,
-): Promise<string[]> {
-  const all = new Set<string>();
+): Promise<ArtPoolIngestRow[]> {
+  const byId = new Map<string, string | null>();
   const limit = 100;
 
   for (const q of SEARCH_TERMS) {
@@ -239,7 +304,12 @@ export async function collectNmaObjectIdsForPool(
       const rows = json.data ?? [];
       if (rows.length === 0) break;
       for (const r of rows) {
-        if (r.id != null && extractBestImageUrl(r.hasVersion)) all.add(String(r.id));
+        if (r.id == null || !extractBestImageUrl(r.hasVersion)) continue;
+        const sid = String(r.id);
+        if (!byId.has(sid)) {
+          const art = nmaPoolArtistFromObject(r).trim() || null;
+          byId.set(sid, art);
+        }
       }
       offset += limit;
       pages++;
@@ -247,7 +317,75 @@ export async function collectNmaObjectIdsForPool(
     await sleep(110);
   }
 
-  return [...all];
+  return [...byId.entries()].map(([objectId, poolArtist]) => ({
+    objectId,
+    poolArtist,
+  }));
+}
+
+/** Full-text `text=` search per artist for the `popular` pool. */
+export async function collectNmaObjectIdsForPopularPool(
+  artistNames: readonly string[],
+  maxPagesPerName = 25,
+): Promise<PopularPoolIngestRow[]> {
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<string>();
+  const limit = 100;
+
+  for (const raw of artistNames) {
+    const q = raw.trim();
+    if (!q) continue;
+
+    const probeParams = new URLSearchParams();
+    probeParams.set("text", q);
+    probeParams.set("media", "*");
+    probeParams.set("limit", "1");
+    probeParams.set("offset", "0");
+
+    const probeRes = await fetch(`${NMA_OBJECT}?${probeParams}`, {
+      headers: nmaHeaders(),
+      cache: "no-store",
+    });
+    await sleep(110);
+    if (!probeRes.ok) continue;
+    const probeJson = (await probeRes.json()) as NmaListResponse;
+    const total = probeJson.meta?.results ?? 0;
+    let offset = 0;
+    let pages = 0;
+
+    while (offset < total && pages < maxPagesPerName) {
+      const params = new URLSearchParams();
+      params.set("text", q);
+      params.set("media", "*");
+      params.set("limit", String(limit));
+      params.set("offset", String(offset));
+
+      const res = await fetch(`${NMA_OBJECT}?${params}`, {
+        headers: nmaHeaders(),
+        cache: "no-store",
+      });
+      await sleep(110);
+      if (!res.ok) break;
+      const json = (await res.json()) as NmaListResponse;
+      const rows = json.data ?? [];
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        if (r.id == null || !extractBestImageUrl(r.hasVersion)) continue;
+        if (!popularPoolSearchHitMatchesArtist(q, nmaPoolArtistFromObject(r)))
+          continue;
+        const sid = String(r.id);
+        const composite = `nma:${sid}`;
+        if (seen.has(composite)) continue;
+        seen.add(composite);
+        out.push({ compositeObjectId: composite, poolArtist: q });
+      }
+      offset += limit;
+      pages++;
+    }
+    await sleep(110);
+  }
+
+  return out;
 }
 
 async function nmaSearchIds(q: string): Promise<string[]> {

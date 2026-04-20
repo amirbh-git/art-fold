@@ -1,18 +1,74 @@
+import { mkdirSync, writeFileSync, writeSync } from "node:fs";
+import { dirname, isAbsolute, resolve as resolvePath } from "node:path";
+
 import { artPoolCount, pickRandomObjectIdsFromPool } from "@/lib/art-pool";
+import type { ArtPoolIngestRow } from "@/lib/art-sources/art-pool-ingest";
+import type { PopularPoolIngestRow } from "@/lib/art-sources/popular-pool-types";
+import { popularPoolSearchHitMatchesArtist } from "@/lib/art-sources/popular-pool-search-hit-match";
 import { SEARCH_TERMS } from "./search-keywords";
 import type { WallSlotPayload } from "./types";
 
 const MET_BASE = "https://collectionapi.metmuseum.org/public/collection/v1";
+
+/** Used when `MET_HTTP_USER_AGENT` is unset so Incapsula is less likely to return HTML 403. */
+const MET_DEFAULT_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+function metCollectionApiHeaders(): Record<string, string> {
+  return {
+    Accept: "application/json",
+    "User-Agent":
+      process.env.MET_HTTP_USER_AGENT?.trim() || MET_DEFAULT_USER_AGENT,
+    "Accept-Language":
+      process.env.MET_HTTP_ACCEPT_LANGUAGE?.trim() || "en-US,en;q=0.9",
+    Referer: "https://www.metmuseum.org/",
+  };
+}
+
+let metPoolLoggedFirstNonJson = false;
+
+function metPoolMaybeLogFirstNonJson(status: number, ct: string, bodyStart: string): void {
+  if (metPoolLoggedFirstNonJson) return;
+  metPoolLoggedFirstNonJson = true;
+  const snippet = bodyStart.replace(/\s+/g, " ").slice(0, 140);
+  metPoolProgressLog(
+    `met pool: first non-JSON object response (HTTP ${status}, content-type: ${ct || "(missing)"}; body starts: ${snippet}) — if this looks like HTML, lower MET_POOL_ARTIST_CONCURRENCY, raise MET_POOL_ARTIST_DELAY_MS, or run from another network; override identity with MET_HTTP_USER_AGENT.`,
+  );
+}
+
+/**
+ * Line-buffered progress for long Met pool runs (visible under `| tee` / CI).
+ * Override log interval with `MET_POOL_PROGRESS_EVERY_BATCHES` (enrichment batches).
+ */
+function metPoolProgressLog(line: string): void {
+  const msg = `[${new Date().toISOString()}] ${line}\n`;
+  try {
+    writeSync(1, msg);
+  } catch {
+    console.log(line);
+  }
+}
 
 type MetSearchResponse = {
   total?: number;
   objectIDs?: number[];
 };
 
+type MetConstituent = {
+  role?: string;
+  name?: string;
+};
+
 type MetObjectDetail = {
   objectID?: number;
   title?: string;
   artistDisplayName?: string;
+  /** When `artistDisplayName` is empty, Met often still fills this (e.g. "Gogh, Vincent van"). */
+  artistAlphaSort?: string;
+  /** Qualifier before the name ("After", "Possibly by", …). */
+  artistPrefix?: string;
+  /** Extra qualifier after the name ("verso only", …). */
+  artistSuffix?: string;
   primaryImage?: string;
   primaryImageSmall?: string;
   objectURL?: string;
@@ -22,6 +78,15 @@ type MetObjectDetail = {
   department?: string;
   creditLine?: string;
   artistDisplayBio?: string;
+  /** Named agents (Artist, Maker, etc.) when `artistDisplayName` is empty. */
+  constituents?: MetConstituent[];
+  /** Attribution for anonymous / workshop works (often shown on the Met website). */
+  culture?: string;
+  dynasty?: string;
+  period?: string;
+  reign?: string;
+  /** Present when the object was removed or the id is invalid. */
+  message?: string;
 };
 
 function sleep(ms: number): Promise<void> {
@@ -210,13 +275,20 @@ async function metSearchObjectIdsOnce(
   const params = buildMetSearchParams(query);
   const res = await fetch(`${MET_BASE}/search?${params}`, {
     cache: "no-store",
+    headers: metCollectionApiHeaders(),
   });
-  if (!res.ok) return null;
+  const text = await res.text();
   const ct = res.headers.get("content-type") ?? "";
-  if (!ct.includes("application/json")) return null;
-  const json = (await res.json()) as MetSearchResponse;
-  const ids = json.objectIDs ?? [];
-  return ids.filter((id) => typeof id === "number" && Number.isFinite(id));
+  const looksJson =
+    ct.toLowerCase().includes("application/json") || text.trimStart().startsWith("{");
+  if (!res.ok || !looksJson) return null;
+  try {
+    const json = JSON.parse(text) as MetSearchResponse;
+    const ids = json.objectIDs ?? [];
+    return ids.filter((id) => typeof id === "number" && Number.isFinite(id));
+  } catch {
+    return null;
+  }
 }
 
 /** Retries on empty HTML/error pages from the CDN (common under load). */
@@ -239,15 +311,323 @@ async function metSearchObjectIds(
   return metSearchObjectIdsFromQuery({ q, medium });
 }
 
+function metIsUnknownName(s: string): boolean {
+  const t = s.trim().toLowerCase();
+  return t === "" || t === "unknown" || t === "anonymous";
+}
+
+/**
+ * Met Collection API: `artistDisplayName` + `artistPrefix` / `artistSuffix` / `artistAlphaSort`;
+ * then `constituents`; then culture/period — see https://metmuseum.github.io/
+ */
+function metArtistDisplayLine(o: MetObjectDetail): string {
+  const prefix = (o.artistPrefix ?? "").trim();
+  const display = (o.artistDisplayName ?? "").trim();
+  const alpha = (o.artistAlphaSort ?? "").trim();
+  const suffix = (o.artistSuffix ?? "").trim();
+  const core = !metIsUnknownName(display) ? display : !metIsUnknownName(alpha) ? alpha : "";
+  const headParts: string[] = [];
+  if (prefix) headParts.push(prefix);
+  if (core) headParts.push(core);
+  if (suffix) headParts.push(suffix);
+  const combined = headParts.join(" ").replace(/\s+/g, " ").trim();
+  if (combined) {
+    const coreUnknown = !core || metIsUnknownName(core);
+    if (!coreUnknown || prefix || suffix) return combined;
+  }
+
+  const cons = o.constituents;
+  if (Array.isArray(cons) && cons.length > 0) {
+    const preferredRoles =
+      /^(artist|maker|architect|designer|modeler|manufacturer|publisher|engraver|etcher|draftsman|draftsperson|lithographer|silversmith|goldsmith|weaver|carver|sculptor|painter|printmaker|author|calligrapher|patron)/i;
+    const skipRole = /^(previous owner|vendor|donor|seller)$/i;
+    const preferred = cons
+      .filter(
+        (c) =>
+          c &&
+          typeof c.name === "string" &&
+          c.name.trim() &&
+          !metIsUnknownName(c.name) &&
+          preferredRoles.test(String(c.role ?? "")),
+      )
+      .map((c) => c.name!.trim());
+    if (preferred.length > 0) return [...new Set(preferred)].join("; ");
+
+    const anyNamed = cons
+      .filter((c) => c && typeof c.name === "string" && c.name.trim() && !skipRole.test(String(c.role ?? "")))
+      .map((c) => c!.name!.trim())
+      .filter((n) => !metIsUnknownName(n));
+    if (anyNamed.length > 0) return [...new Set(anyNamed)].join("; ");
+  }
+
+  const bits: string[] = [];
+  for (const v of [o.culture, o.dynasty, o.period, o.reign]) {
+    const t = (v ?? "").trim();
+    if (t) bits.push(t);
+  }
+  if (bits.length > 0) return bits.join("; ");
+
+  return "";
+}
+
+function metPoolObjectFetchAttempts(): number {
+  const raw = process.env.MET_POOL_OBJECT_FETCH_ATTEMPTS?.trim();
+  if (raw === undefined || raw === "") return 8;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, 20) : 8;
+}
+
+function metPoolObjectFetchBackoffMs(status: number, attemptIndex: number): number {
+  const blocked = status === 403 || status === 429 || status >= 500;
+  const base = blocked ? 2_200 : 900;
+  return base + attemptIndex * 1_100;
+}
+
+async function fetchMetObjectDetailForPool(
+  objectId: string,
+): Promise<MetObjectDetail | null> {
+  const url = `${MET_BASE}/objects/${encodeURIComponent(objectId)}`;
+  const headers = metCollectionApiHeaders();
+  const maxAttempts = metPoolObjectFetchAttempts();
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, { cache: "no-store", headers });
+    } catch {
+      await sleep(1_000 + attempt * 800);
+      continue;
+    }
+    const text = await res.text();
+    const ct = res.headers.get("content-type") ?? "";
+    const looksJson =
+      ct.toLowerCase().includes("application/json") || text.trimStart().startsWith("{");
+    if (!looksJson) {
+      metPoolMaybeLogFirstNonJson(res.status, ct, text);
+      if (attempt + 1 < maxAttempts) {
+        await sleep(metPoolObjectFetchBackoffMs(res.status, attempt));
+      }
+      continue;
+    }
+    let o: MetObjectDetail;
+    try {
+      o = JSON.parse(text) as MetObjectDetail;
+    } catch {
+      await sleep(400 + attempt * 500);
+      continue;
+    }
+    if (typeof o.message === "string" && o.message.trim()) {
+      if (res.status === 404) return null;
+      if (attempt + 1 < maxAttempts) {
+        await sleep(metPoolObjectFetchBackoffMs(res.status, attempt));
+      }
+      continue;
+    }
+    if (!res.ok) {
+      if (res.status === 404) return null;
+      if (res.status === 403 || res.status === 429 || res.status >= 500) {
+        if (attempt + 1 < maxAttempts) {
+          await sleep(metPoolObjectFetchBackoffMs(res.status, attempt));
+        }
+        continue;
+      }
+      return null;
+    }
+    return o;
+  }
+  return null;
+}
+
+/**
+ * Search only returns numeric IDs; `poolArtist` needs a per-object fetch.
+ * Tune with `MET_POOL_ARTIST_CONCURRENCY` (default 3) and `MET_POOL_ARTIST_DELAY_MS` (default 250).
+ * Object fetches: `MET_POOL_OBJECT_FETCH_ATTEMPTS` (default 8), headers via `MET_HTTP_USER_AGENT` / `MET_HTTP_ACCEPT_LANGUAGE`.
+ */
+function metPoolProgressEveryBatches(): number {
+  const raw = process.env.MET_POOL_PROGRESS_EVERY_BATCHES?.trim();
+  if (raw === undefined || raw === "") return 5;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, 500) : 5;
+}
+
+/** Fewer search queries for smoke tests (`MET_POOL_QUICK_SEARCH=1`). */
+function metPoolQuickSearch(): boolean {
+  const v = process.env.MET_POOL_QUICK_SEARCH?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+/** After the union, keep only `ceil(n * fraction)` ids (smallest object ids first). */
+function metPoolTestFraction(): number | null {
+  const raw = process.env.MET_POOL_TEST_FRACTION?.trim();
+  if (raw === undefined || raw === "") return null;
+  const f = Number.parseFloat(raw);
+  if (!Number.isFinite(f) || f <= 0 || f > 1) return null;
+  return f;
+}
+
+/** After the union, keep at most this many ids (sorted ascending). Overrides fraction if both set. */
+function metPoolMaxIdsEnv(): number | null {
+  const raw = process.env.MET_POOL_MAX_IDS?.trim();
+  if (raw === undefined || raw === "") return null;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? n : null;
+}
+
+async function enrichMetPoolArtistRows(ids: number[]): Promise<ArtPoolIngestRow[]> {
+  const concurrency = Math.min(
+    20,
+    Math.max(
+      1,
+      Number.parseInt(process.env.MET_POOL_ARTIST_CONCURRENCY ?? "3", 10) || 3,
+    ),
+  );
+  const delayMs = Math.max(
+    0,
+    Number.parseInt(process.env.MET_POOL_ARTIST_DELAY_MS ?? "250", 10) || 0,
+  );
+  const total = ids.length;
+  const progressEvery = metPoolProgressEveryBatches();
+  metPoolProgressLog(
+    `met pool: enriching ${total.toLocaleString()} object ids for poolArtist (concurrency=${concurrency}, delayMs=${delayMs}; progress every ${progressEvery} batch(es); tune via MET_POOL_ARTIST_CONCURRENCY / MET_POOL_ARTIST_DELAY_MS)`,
+  );
+
+  const out: ArtPoolIngestRow[] = [];
+  let batchesDone = 0;
+  let cumOk = 0;
+  let cumWithArtist = 0;
+  for (let base = 0; base < ids.length; base += concurrency) {
+    const slice = ids.slice(base, base + concurrency);
+    let details: (MetObjectDetail | null)[];
+    try {
+      details = await Promise.all(
+        slice.map((id) => fetchMetObjectDetailForPool(String(id))),
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      metPoolProgressLog(
+        `met pool: FATAL — object detail batch failed at offset ${base} (ids ${slice[0]}…): ${msg}`,
+      );
+      throw e;
+    }
+    for (let i = 0; i < slice.length; i++) {
+      const id = slice[i]!;
+      const o = details[i];
+      const artist = o ? metArtistDisplayLine(o).trim() || null : null;
+      out.push({ objectId: String(id), poolArtist: artist });
+      if (o) cumOk++;
+      if (artist) cumWithArtist++;
+    }
+    batchesDone++;
+    const done = Math.min(base + concurrency, total);
+    if (batchesDone % progressEvery === 0 || done === total) {
+      let batchOk = 0;
+      let batchWithArtist = 0;
+      for (const d of details) {
+        if (d) batchOk++;
+        if (d && metArtistDisplayLine(d).trim()) batchWithArtist++;
+      }
+      const pct = ((done / total) * 100).toFixed(1);
+      const cumPct = done > 0 ? ((cumOk / done) * 100).toFixed(1) : "0.0";
+      const cumArtPct = done > 0 ? ((cumWithArtist / done) * 100).toFixed(1) : "0.0";
+      metPoolProgressLog(
+        `met pool: enrich ${done.toLocaleString()}/${total.toLocaleString()} (${pct}%) — cumulative JSON ok ${cumOk}/${done} (${cumPct}%), artist ${cumWithArtist}/${done} (${cumArtPct}%); last batch ${batchOk}/${details.length} JSON, ${batchWithArtist}/${details.length} artist`,
+      );
+    }
+    if (delayMs > 0) await sleep(delayMs);
+  }
+  metPoolProgressLog(
+    `met pool: enrich complete — ${out.length.toLocaleString()} rows (next: insert into DB)`,
+  );
+  return out;
+}
+
+/**
+ * Parse a Met id list file: one integer per line (# comments allowed), a JSON array of numbers,
+ * or `{"objectIDs":[1,2,…]}` (Met search response shape).
+ */
+export function parseMetPoolIdsFromFileContent(content: string): number[] {
+  const trimmed = content.replace(/^\uFEFF/, "").trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((x) => (typeof x === "number" ? x : Number.parseInt(String(x), 10)))
+          .filter((n) => Number.isFinite(n) && n > 0)
+          .map((n) => Math.floor(n));
+      }
+      if (parsed && typeof parsed === "object" && "objectIDs" in parsed) {
+        const raw = (parsed as { objectIDs?: unknown }).objectIDs;
+        if (!Array.isArray(raw)) return [];
+        return raw
+          .map((x) => (typeof x === "number" ? x : Number.parseInt(String(x), 10)))
+          .filter((n) => Number.isFinite(n) && n > 0)
+          .map((n) => Math.floor(n));
+      }
+    } catch {
+      return [];
+    }
+  }
+  const out: number[] = [];
+  for (const line of trimmed.split(/\r?\n/)) {
+    const s = line.replace(/#.*$/, "").trim();
+    if (!s) continue;
+    const n = Number.parseInt(s, 10);
+    if (Number.isFinite(n) && n > 0) out.push(Math.floor(n));
+  }
+  return out;
+}
+
+function writeMetPoolIdSnapshotIfRequested(ids: readonly number[]): void {
+  const raw = process.env.MET_POOL_SAVE_ID_LIST?.trim();
+  if (!raw) return;
+  const outPath = isAbsolute(raw) ? raw : resolvePath(process.cwd(), raw);
+  const dir = dirname(outPath);
+  if (dir && dir !== "." && dir !== outPath) mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    outPath,
+    `${JSON.stringify({ version: 1, objectIDs: [...ids] }, null, 0)}\n`,
+    "utf8",
+  );
+  metPoolProgressLog(
+    `met pool: wrote id snapshot (${ids.length.toLocaleString()} ids) → ${outPath} (re-run enrichment only: npm run art-pool:build -- --only met --met-enrich-only --met-id-file <path>)`,
+  );
+}
+
+/** Dedupe, sort, then run per-object Met API fetches for `poolArtist` (no search phases). */
+export async function enrichMetPoolRowsForObjectIds(
+  ids: readonly number[],
+): Promise<ArtPoolIngestRow[]> {
+  const uniq = new Set<number>();
+  for (const id of ids) {
+    if (typeof id === "number" && Number.isFinite(id) && id > 0) uniq.add(Math.floor(id));
+  }
+  const sorted = [...uniq].sort((a, b) => a - b);
+  metPoolProgressLog(
+    `met pool: enrich-only — ${sorted.length.toLocaleString()} unique object ids (skipping search phases)`,
+  );
+  return enrichMetPoolArtistRows(sorted);
+}
+
 export async function fetchMetObject(
   objectId: string,
 ): Promise<WallSlotPayload | null> {
   const res = await fetch(
     `${MET_BASE}/objects/${encodeURIComponent(objectId)}`,
-    { next: { revalidate: 3600 } },
+    {
+      next: { revalidate: 3600 },
+      headers: metCollectionApiHeaders(),
+    },
   );
   if (!res.ok) return null;
-  const o = (await res.json()) as MetObjectDetail;
+  const text = await res.text();
+  let o: MetObjectDetail;
+  try {
+    o = JSON.parse(text) as MetObjectDetail;
+  } catch {
+    return null;
+  }
+  if (typeof o.message === "string" && o.message.trim()) return null;
   const img = o.primaryImage?.trim() || o.primaryImageSmall?.trim();
   if (!img) return null;
   const oid = o.objectID;
@@ -257,7 +637,7 @@ export async function fetchMetObject(
     source: "met",
     objectId: sid,
     title: (o.title ?? "Untitled").trim() || "Untitled",
-    artist: (o.artistDisplayName ?? "").trim(),
+    artist: metArtistDisplayLine(o),
     imageUrl: img,
     objectUrl:
       (o.objectURL ?? "").trim() ||
@@ -275,60 +655,206 @@ export async function fetchMetObject(
  * Unions many search queries (`hasImages=true`) to reach a large eligible ID set
  * (typically 10k+). Each Met search returns all matching IDs in one response.
  */
-export async function collectMetObjectIdsForPool(): Promise<number[]> {
+export async function collectMetObjectIdsForPool(): Promise<ArtPoolIngestRow[]> {
   const all = new Set<number>();
+  const quick = metPoolQuickSearch();
+  const extraSeeds = quick
+    ? MET_POOL_EXTRA_SEEDS.slice(0, 5)
+    : MET_POOL_EXTRA_SEEDS;
+  const searchTerms = quick ? SEARCH_TERMS.slice(0, 15) : SEARCH_TERMS;
+  const deptScopes = quick
+    ? MET_DEPARTMENT_SCOPES.slice(0, 6)
+    : MET_DEPARTMENT_SCOPES;
+  const dateSlices = quick ? MET_DATE_SLICES.slice(0, 3) : MET_DATE_SLICES;
+  const flagSeeds = quick
+    ? MET_FLAG_SEED_QUERIES.slice(0, 4)
+    : MET_FLAG_SEED_QUERIES;
+
+  if (quick) {
+    metPoolProgressLog(
+      "met pool: MET_POOL_QUICK_SEARCH=1 — reduced search surface (re-run full build without this for production union)",
+    );
+  }
 
   const ingest = async (ids: number[]): Promise<void> => {
     for (const id of ids) all.add(id);
   };
 
   const runSeed = async (q: string, medium?: string): Promise<void> => {
-    const ids = await metSearchObjectIds(q, medium);
-    await ingest(ids);
+    try {
+      const ids = await metSearchObjectIds(q, medium);
+      await ingest(ids);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      metPoolProgressLog(`met pool: search FAILED seed q=${JSON.stringify(q)}: ${msg}`);
+      throw e;
+    }
     await sleep(35);
   };
 
   const runQuery = async (query: MetSearchQuery): Promise<void> => {
-    const ids = await metSearchObjectIdsFromQuery(query);
-    await ingest(ids);
+    try {
+      const ids = await metSearchObjectIdsFromQuery(query);
+      await ingest(ids);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      metPoolProgressLog(`met pool: search FAILED query q=${JSON.stringify(query.q)}: ${msg}`);
+      throw e;
+    }
     await sleep(35);
   };
 
-  for (const seed of MET_POOL_EXTRA_SEEDS) {
+  metPoolProgressLog(
+    `met pool: phase 1/5 — extra seeds (${extraSeeds.length} queries)…`,
+  );
+  for (const seed of extraSeeds) {
     await runSeed(seed.q, seed.medium);
   }
+  metPoolProgressLog(
+    `met pool: phase 1 done — ${all.size.toLocaleString()} unique ids`,
+  );
 
-  for (const term of SEARCH_TERMS) {
+  metPoolProgressLog(
+    `met pool: phase 2/5 — SEARCH_TERMS (${searchTerms.length} terms)…`,
+  );
+  let termIdx = 0;
+  for (const term of searchTerms) {
     await runSeed(term);
+    termIdx++;
+    if (termIdx % 20 === 0 || termIdx === searchTerms.length) {
+      metPoolProgressLog(
+        `met pool: phase 2 … ${termIdx}/${searchTerms.length} terms — ${all.size.toLocaleString()} ids`,
+      );
+    }
   }
+  metPoolProgressLog(
+    `met pool: phase 2 done — ${all.size.toLocaleString()} unique ids`,
+  );
 
-  for (const row of MET_DEPARTMENT_SCOPES) {
+  metPoolProgressLog(
+    `met pool: phase 3/5 — department scopes (${deptScopes.length} queries)…`,
+  );
+  let depIdx = 0;
+  for (const row of deptScopes) {
     await runQuery({
       q: row.q,
       medium: row.medium,
       departmentId: row.departmentId,
     });
+    depIdx++;
+    if (depIdx % 4 === 0 || depIdx === deptScopes.length) {
+      metPoolProgressLog(
+        `met pool: phase 3 … ${depIdx}/${deptScopes.length} — ${all.size.toLocaleString()} ids`,
+      );
+    }
   }
+  metPoolProgressLog(
+    `met pool: phase 3 done — ${all.size.toLocaleString()} unique ids`,
+  );
 
-  for (const slice of MET_DATE_SLICES) {
+  metPoolProgressLog(
+    `met pool: phase 4/5 — date slices (${dateSlices.length} queries)…`,
+  );
+  let dateIdx = 0;
+  for (const slice of dateSlices) {
     await runQuery({
       q: slice.q,
       dateBegin: slice.dateBegin,
       dateEnd: slice.dateEnd,
     });
+    dateIdx++;
+    metPoolProgressLog(
+      `met pool: phase 4 … ${dateIdx}/${dateSlices.length} — ${all.size.toLocaleString()} ids`,
+    );
   }
+  metPoolProgressLog(
+    `met pool: phase 4 done — ${all.size.toLocaleString()} unique ids`,
+  );
 
-  for (const seed of MET_FLAG_SEED_QUERIES) {
+  const flagQueries = flagSeeds.length * 3;
+  metPoolProgressLog(
+    `met pool: phase 5/5 — title/tags/artist flag searches (${flagQueries} requests)…`,
+  );
+  let fq = 0;
+  for (const seed of flagSeeds) {
     await runQuery({ q: seed.q, medium: seed.medium, titleOnly: true });
+    fq++;
+    if (fq % 6 === 0 || fq === flagQueries) {
+      metPoolProgressLog(
+        `met pool: phase 5 … ${fq}/${flagQueries} — ${all.size.toLocaleString()} ids`,
+      );
+    }
     await runQuery({ q: seed.q, medium: seed.medium, tagsOnly: true });
+    fq++;
+    if (fq % 6 === 0 || fq === flagQueries) {
+      metPoolProgressLog(
+        `met pool: phase 5 … ${fq}/${flagQueries} — ${all.size.toLocaleString()} ids`,
+      );
+    }
     await runQuery({
       q: seed.q,
       medium: seed.medium,
       artistOrCultureOnly: true,
     });
+    fq++;
+    if (fq % 6 === 0 || fq === flagQueries) {
+      metPoolProgressLog(
+        `met pool: phase 5 … ${fq}/${flagQueries} — ${all.size.toLocaleString()} ids`,
+      );
+    }
+  }
+  metPoolProgressLog(
+    `met pool: phase 5 done — ${all.size.toLocaleString()} unique ids (starting per-object enrichment)`,
+  );
+
+  let ids = [...all].sort((a, b) => a - b);
+  const collected = ids.length;
+  const maxCap = metPoolMaxIdsEnv();
+  const frac = metPoolTestFraction();
+  if (maxCap != null) {
+    ids = ids.slice(0, Math.min(maxCap, ids.length));
+  } else if (frac != null) {
+    const n = Math.max(1, Math.ceil(ids.length * frac));
+    ids = ids.slice(0, n);
+  }
+  if (ids.length < collected) {
+    metPoolProgressLog(
+      `met pool: id cap applied — enriching ${ids.length.toLocaleString()} of ${collected.toLocaleString()} collected (MET_POOL_MAX_IDS or MET_POOL_TEST_FRACTION)`,
+    );
   }
 
-  return [...all];
+  writeMetPoolIdSnapshotIfRequested(ids);
+  return enrichMetPoolArtistRows(ids);
+}
+
+/** `ArtistOrCulture` search for each name — used by the cross-museum `popular` pool. */
+export async function collectMetObjectIdsForPopularPool(
+  artistNames: readonly string[],
+): Promise<PopularPoolIngestRow[]> {
+  const out: PopularPoolIngestRow[] = [];
+  const seen = new Set<string>();
+  for (const raw of artistNames) {
+    const name = raw.trim();
+    if (!name) continue;
+    const ids = await metSearchObjectIdsFromQuery({
+      q: name,
+      artistOrCultureOnly: true,
+    });
+    for (const id of ids) {
+      if (typeof id !== "number" || !Number.isFinite(id)) continue;
+      const detail = await fetchMetObjectDetailForPool(String(id));
+      if (!detail) continue;
+      await sleep(25);
+      const artistLine = metArtistDisplayLine(detail);
+      if (!popularPoolSearchHitMatchesArtist(name, artistLine)) continue;
+      const composite = `met:${id}`;
+      if (seen.has(composite)) continue;
+      seen.add(composite);
+      out.push({ compositeObjectId: composite, poolArtist: name });
+    }
+    await sleep(35);
+  }
+  return out;
 }
 
 async function pickRandomMetId(exclude: Set<string>): Promise<string | null> {

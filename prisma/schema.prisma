@@ -41,10 +41,13 @@ model ArtPoolEntry {
   id        String   @id @default(cuid())
   source    String
   objectId  String
+  /** Artist string captured at pool build when the source API provides it (any `source`). */
+  poolArtist String?
   createdAt DateTime @default(now())
 
   @@unique([source, objectId])
   @@index([source])
+  @@index([poolArtist])
 }
 
 /**
@@ -55,8 +58,10 @@ model ArtPoolArchive {
   id        String   @id @default(cuid())
   source    String
   objectId  String
+  poolArtist String?
   createdAt DateTime @default(now())
 
   @@unique([source, objectId])
   @@index([source])
+  @@index([poolArtist])
 }

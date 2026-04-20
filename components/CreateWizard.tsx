@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { WallSlotPayload } from "@/lib/art-sources/types";
-import { slotCompositeKey } from "@/lib/art-sources/types";
+import type { ArtSourceId, WallSlotPayload } from "@/lib/art-sources/types";
+import { isArtSourceId, slotCompositeKey } from "@/lib/art-sources/types";
 import { ART_FILTERS_ENABLED } from "@/lib/feature-flags";
 import {
   DEFAULT_MET_CARD_FILTERS,
@@ -69,16 +69,35 @@ function origin(): string {
   return window.location.origin;
 }
 
+/** Museum round-robin order + cursor; echoed by `/api/exhibits/cards` for consistent sequencing. */
+type DeckCursorSession = {
+  sourceOrder: ArtSourceId[];
+  cursor: number;
+};
+
+function parseValidatedSourceOrder(raw: unknown): ArtSourceId[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: ArtSourceId[] = [];
+  for (const x of raw) {
+    if (!isArtSourceId(x)) return undefined;
+    out.push(x);
+  }
+  return out;
+}
+
 type FetchCardsResult = {
   cards: WallSlotPayload[];
   /** Set when the response is not usable JSON or the route failed (e.g. wrong dev port → HTML 404). */
   error?: string;
+  sourceOrder?: ArtSourceId[];
+  nextCursor?: number;
 };
 
 async function fetchCards(
   count: number,
   excludeIds: Iterable<string>,
   filters: MetCardFilters,
+  deckSession: DeckCursorSession | null,
 ): Promise<FetchCardsResult> {
   const effectiveFilters = ART_FILTERS_ENABLED
     ? filters
@@ -88,6 +107,10 @@ async function fetchCards(
     params.set("count", String(count));
     params.set("exclude", [...excludeIds].join(","));
     appendMetCardFilterParams(params, effectiveFilters);
+    if (deckSession) {
+      params.set("order", deckSession.sourceOrder.join(","));
+      params.set("cursor", String(deckSession.cursor));
+    }
     const res = await fetch(`/api/exhibits/cards?${params.toString()}`, {
       cache: "no-store",
     });
@@ -101,6 +124,8 @@ async function fetchCards(
     const data = (await res.json()) as {
       cards?: WallSlotPayload[];
       error?: string;
+      sourceOrder?: unknown;
+      nextCursor?: unknown;
     };
     if (!res.ok) {
       return {
@@ -108,7 +133,21 @@ async function fetchCards(
         error: data.error ?? `Request failed (${res.status})`,
       };
     }
-    return { cards: data.cards ?? [] };
+    const sourceOrder = parseValidatedSourceOrder(data.sourceOrder);
+    const nc = data.nextCursor;
+    const nextCursor =
+      typeof nc === "number" &&
+      Number.isInteger(nc) &&
+      nc >= 0 &&
+      sourceOrder != null
+        ? nc
+        : undefined;
+    return {
+      cards: data.cards ?? [],
+      ...(sourceOrder && nextCursor !== undefined
+        ? { sourceOrder, nextCursor }
+        : {}),
+    };
   } catch (e) {
     return {
       cards: [],
@@ -157,6 +196,8 @@ export function CreateWizard({
   const linkCopyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchingRef = useRef(false);
+  /** Stable museum permutation + round-robin cursor across `/api/exhibits/cards` calls. */
+  const deckSessionRef = useRef<DeckCursorSession | null>(null);
   const seenRef = useRef(seenIds);
   seenRef.current = seenIds;
 
@@ -176,14 +217,22 @@ export function CreateWizard({
     if (bufferRef.current.length >= BUFFER_CAP) return;
     fetchingRef.current = true;
     try {
-      const { cards, error } = await fetchCards(
+      const result = await fetchCards(
         REFILL_BATCH,
         seenRef.current,
         filtersRef.current,
+        deckSessionRef.current,
       );
+      const { cards, error } = result;
       if (error) setCardsFetchError(error);
       else if (cards.length > 0) setCardsFetchError(null);
       if (cards.length > 0) {
+        if (result.sourceOrder != null && result.nextCursor !== undefined) {
+          deckSessionRef.current = {
+            sourceOrder: result.sourceOrder,
+            cursor: result.nextCursor,
+          };
+        }
         setSeenIds((prev) => {
           const next = new Set(prev);
           cards.forEach((c) => next.add(slotCompositeKey(c)));
@@ -203,14 +252,26 @@ export function CreateWizard({
     const exclude = new Set(
       curatedRef.current.map((c) => slotCompositeKey(c)),
     );
+    const session =
+      deckSessionRef.current != null
+        ? { ...deckSessionRef.current, cursor: 0 }
+        : null;
     try {
-      const { cards, error } = await fetchCards(
+      const result = await fetchCards(
         INITIAL_SWIPE_FETCH,
         exclude,
         filtersRef.current,
+        session,
       );
+      const { cards, error } = result;
       if (error) setCardsFetchError(error);
       if (cards.length > 0) {
+        if (result.sourceOrder != null && result.nextCursor !== undefined) {
+          deckSessionRef.current = {
+            sourceOrder: result.sourceOrder,
+            cursor: result.nextCursor,
+          };
+        }
         void warmSwipeDeckImages(cards);
         const [first, ...rest] = cards;
         setCurrentCard(first!);
@@ -233,6 +294,7 @@ export function CreateWizard({
     async (next: MetCardFilters) => {
       setLoadingCards(true);
       setAppliedFilters(next);
+      deckSessionRef.current = null;
       const exclude = new Set(
         curatedRef.current.map((c) => slotCompositeKey(c)),
       );
@@ -240,14 +302,22 @@ export function CreateWizard({
       setBuffer([]);
       setCurrentCard(null);
       try {
-        const { cards, error } = await fetchCards(
+        const result = await fetchCards(
           INITIAL_SWIPE_FETCH,
           exclude,
           next,
+          null,
         );
+        const { cards, error } = result;
         if (error) setCardsFetchError(error);
         else setCardsFetchError(null);
         if (cards.length > 0) {
+          if (result.sourceOrder != null && result.nextCursor !== undefined) {
+            deckSessionRef.current = {
+              sourceOrder: result.sourceOrder,
+              cursor: result.nextCursor,
+            };
+          }
           void warmSwipeDeckImages(cards);
           const [first, ...rest] = cards;
           setCurrentCard(first!);
@@ -275,15 +345,24 @@ export function CreateWizard({
     (async () => {
       setLoadingCards(true);
       setCardsFetchError(null);
+      deckSessionRef.current = null;
       try {
-        const { cards, error } = await fetchCards(
+        const result = await fetchCards(
           INITIAL_SWIPE_FETCH,
           new Set(),
           DEFAULT_MET_CARD_FILTERS,
+          null,
         );
+        const { cards, error } = result;
         if (cancelled) return;
         if (error) setCardsFetchError(error);
         if (cards.length > 0) {
+          if (result.sourceOrder != null && result.nextCursor !== undefined) {
+            deckSessionRef.current = {
+              sourceOrder: result.sourceOrder,
+              cursor: result.nextCursor,
+            };
+          }
           void warmSwipeDeckImages(cards);
           if (cancelled) return;
           const [first, ...rest] = cards;
