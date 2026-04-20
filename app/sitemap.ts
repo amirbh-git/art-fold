@@ -23,23 +23,27 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: path === "" ? 1 : 0.7,
   }));
 
-  const exhibits = await prisma.exhibit.findMany({
-    where: {
-      featureOnHomepage: true,
-      slots: { some: { position: SLOT_COUNT } },
-    },
-    select: {
-      id: true,
-      createdAt: true,
-    },
-  });
-
-  const exhibitEntries: MetadataRoute.Sitemap = exhibits.map((e) => ({
-    url: `${base}/e/${e.id}`,
-    lastModified: e.createdAt,
-    changeFrequency: "monthly" as const,
-    priority: 0.6,
-  }));
+  let exhibitEntries: MetadataRoute.Sitemap = [];
+  try {
+    const exhibits = await prisma.exhibit.findMany({
+      where: {
+        featureOnHomepage: true,
+        slots: { some: { position: SLOT_COUNT } },
+      },
+      select: {
+        id: true,
+        createdAt: true,
+      },
+    });
+    exhibitEntries = exhibits.map((e) => ({
+      url: `${base}/e/${e.id}`,
+      lastModified: e.createdAt,
+      changeFrequency: "monthly" as const,
+      priority: 0.6,
+    }));
+  } catch {
+    // Omit exhibit URLs when the database is unreachable (e.g. `next build` without a valid DATABASE_URL).
+  }
 
   return [...staticEntries, ...exhibitEntries];
 }

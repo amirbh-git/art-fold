@@ -41,15 +41,15 @@ If you see an error like “command not found,” Node did not install correctly
 
 ## Part 3: Go to the project folder in Terminal
 
-Your project lives here (already on your Mac from Cursor):
+You need a **terminal open inside your clone** of this repository (the folder that contains `package.json`).
 
-`/Users/amir/Documents/cursor_projects/digital-exhibit`
-
-In Terminal, **paste this entire line** and press **Enter**:
+If you already know where you put the project, `cd` there. For example, if the folder is on your Desktop:
 
 ```bash
-cd /Users/amir/Documents/cursor_projects/digital-exhibit
+cd ~/Desktop/digital-exhibit
 ```
+
+Replace the path with **your** actual folder. The folder name might be `digital-exhibit` or whatever you named it when you cloned or copied the repo.
 
 **What this does:** `cd` means “change directory”—you are now *inside* the project folder.  
 Every command after this should be run **while you are in this folder** (same Terminal window).
@@ -60,9 +60,7 @@ Every command after this should be run **while you are in this folder** (same Te
 pwd
 ```
 
-Press Enter. It should print:
-
-`/Users/amir/Documents/cursor_projects/digital-exhibit`
+Press Enter. You should see a path that ends with your project folder name. You can also run `ls` and confirm you see files like `package.json` and `SETUP.md`.
 
 ---
 
@@ -93,7 +91,7 @@ The app reads database settings from a file named **`.env`** in the project fold
 **Option A — using Cursor (recommended if you already use Cursor)**
 
 1. In Cursor: **File → Open Folder…**
-2. Choose the folder **digital-exhibit** (inside `cursor_projects`).
+2. Choose the project folder (the one that contains `package.json`).
 3. In the left file list, click **New File**.
 4. Name the file exactly: **`.env`** (starts with a dot).
 5. Put **exactly one line** in the file (replace the part in quotes with your Neon string):
@@ -166,7 +164,7 @@ When it works, Terminal will say something like **“Ready”** and show **http:
 1. Open **Safari** or **Chrome**.
 2. In the address bar, type: **http://localhost:3000** and press Enter.
 
-You should see the **Digital exhibit** page.
+You should see the **Art Fold** home page.
 
 **To stop the server:** click the Terminal window and press **Control + C** (hold Control, press C).
 
@@ -218,7 +216,7 @@ This app is ready to deploy. The repo already includes **`vercel.json`**, which 
 3. After it is created, GitHub shows commands to push an existing repo. From your Mac, in Terminal:
 
 ```bash
-cd /Users/amir/Documents/cursor_projects/digital-exhibit
+cd /path/to/your/digital-exhibit-clone
 git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
 git push -u origin main
 ```
@@ -259,7 +257,7 @@ If you ever paste or commit a Harvard key by mistake, **rotate it** in Harvard�
 Run these in Terminal, one after another, from the `digital-exhibit` folder:
 
 ```bash
-cd /Users/amir/Documents/cursor_projects/digital-exhibit
+cd /path/to/your/digital-exhibit-clone
 node -v
 npm install
 npx prisma migrate deploy
