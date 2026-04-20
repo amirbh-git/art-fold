@@ -130,7 +130,7 @@ export async function fetchMplusArtwork(
   let html: string;
   try {
     const res = await fetch(pageUrl, {
-      headers: { "User-Agent": "digital-exhibit/1.0 (collection embed)" },
+      headers: { "User-Agent": "art-fold/1.0 (collection embed)" },
       next: { revalidate: 3600 },
     });
     if (!res.ok) return null;
