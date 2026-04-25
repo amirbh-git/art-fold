@@ -12,6 +12,29 @@ const STATIC_PATHS = [
   "/exhibits",
 ] as const;
 
+const DB_TIMEOUT_MS = 4_000;
+
+async function fetchExhibitEntries(
+  base: string,
+): Promise<MetadataRoute.Sitemap> {
+  const exhibits = await prisma.exhibit.findMany({
+    where: {
+      featureOnHomepage: true,
+      slots: { every: { position: { lte: SLOT_COUNT } } },
+    },
+    select: { id: true, createdAt: true, _count: { select: { slots: true } } },
+  });
+
+  return exhibits
+    .filter((e) => e._count.slots === SLOT_COUNT)
+    .map((e) => ({
+      url: `${base}/e/${e.id}`,
+      lastModified: e.createdAt,
+      changeFrequency: "monthly" as const,
+      priority: 0.6,
+    }));
+}
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = siteOrigin() || DEFAULT_SITE_ORIGIN;
   const lastModified = new Date();
@@ -25,24 +48,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   let exhibitEntries: MetadataRoute.Sitemap = [];
   try {
-    const exhibits = await prisma.exhibit.findMany({
-      where: {
-        featureOnHomepage: true,
-        slots: { some: { position: SLOT_COUNT } },
-      },
-      select: {
-        id: true,
-        createdAt: true,
-      },
-    });
-    exhibitEntries = exhibits.map((e) => ({
-      url: `${base}/e/${e.id}`,
-      lastModified: e.createdAt,
-      changeFrequency: "monthly" as const,
-      priority: 0.6,
-    }));
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("sitemap db timeout")), DB_TIMEOUT_MS),
+    );
+    exhibitEntries = await Promise.race([
+      fetchExhibitEntries(base),
+      timeout,
+    ]);
   } catch {
-    // Omit exhibit URLs when the database is unreachable (e.g. `next build` without a valid DATABASE_URL).
+    // Static entries still returned when DB is unreachable or slow.
   }
 
   return [...staticEntries, ...exhibitEntries];
