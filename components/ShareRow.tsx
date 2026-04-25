@@ -45,14 +45,12 @@ export function ShareRow({ url, exhibitTitle, blurb }: Props) {
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-2">
-      <button
-        type="button"
-        onClick={() => void shareNative()}
-        className="rounded-lg border border-neutral-400/70 bg-white px-4 py-2 text-sm font-medium text-neutral-800 shadow-sm hover:bg-neutral-50"
-      >
-        Share…
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={() => void shareNative()}
+      className="rounded-lg border border-neutral-400/70 bg-white px-4 py-2 text-sm font-medium text-neutral-800 shadow-sm hover:bg-neutral-50"
+    >
+      Share…
+    </button>
   );
 }

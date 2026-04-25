@@ -11,6 +11,7 @@ import {
   appendMetCardFilterParams,
 } from "@/lib/met-filters";
 import { copyTextToClipboard } from "@/lib/copy-to-clipboard";
+import { SITE_NAME } from "@/lib/site";
 import { SLOT_COUNT } from "@/lib/wall-layout";
 import { GalleryWall } from "./GalleryWall";
 import { ArtCard, ART_CARD_TOTAL_HEIGHT_CLASS } from "./ArtCard";
@@ -432,13 +433,12 @@ export function CreateWizard({
   useEffect(() => {
     if (step !== "swipe") return;
     if (loadingCards) return;
-    if (isFull) return;
     if (currentCard != null) return;
     if (buffer.length === 0) return;
     const [first, ...rest] = buffer;
     setCurrentCard(first);
     setBuffer(rest);
-  }, [step, loadingCards, isFull, currentCard, buffer]);
+  }, [step, loadingCards, currentCard, buffer]);
 
   /** Keep queued card images in the browser cache so the next swap does not flash. */
   useEffect(() => {
@@ -541,7 +541,9 @@ export function CreateWizard({
   }, [shareUrl]);
 
   useEffect(() => {
-    if (step !== "done") {
+    if (step === "done") {
+      window.scrollTo({ top: 0 });
+    } else {
       setLinkCopyFeedback("idle");
       if (linkCopyResetRef.current) {
         clearTimeout(linkCopyResetRef.current);
@@ -559,6 +561,35 @@ export function CreateWizard({
   return (
     <>
       <div className="mx-auto flex max-w-sm flex-col">
+        {/* ─── HEADER ─── */}
+        {step === "done" ? (
+          <p className="mb-4 text-center">
+            <a
+              href="/"
+              className="text-sm font-medium text-neutral-900 underline underline-offset-2"
+            >
+              ← {SITE_NAME}
+            </a>
+          </p>
+        ) : (
+          <header className="mb-4 text-center">
+            <h1 className="inline-flex items-center text-3xl font-bold tracking-tight text-neutral-900">
+              <span>Art</span>
+              <img
+                src="/artfold-mark.svg"
+                alt=""
+                aria-hidden="true"
+                className="mx-1 h-8 w-auto"
+                style={{ marginLeft: "5px", marginRight: "3px" }}
+              />
+              <span>Fold</span>
+            </h1>
+            <p className="mt-1 text-sm text-neutral-500">
+              Curate your own art exhibit
+            </p>
+          </header>
+        )}
+
         {/* ─── SWIPE STEP ─── */}
         {step === "swipe" && (
           <section className="flex flex-col gap-4">
@@ -711,6 +742,7 @@ export function CreateWizard({
               interactive={false}
               showLockChrome={false}
               variant="theme"
+              onTileClick={(slot) => setDetailCard(slot)}
             />
             <form
               className="space-y-4"
@@ -848,10 +880,64 @@ export function CreateWizard({
             <h2 className="text-center text-xl font-semibold tracking-tight text-neutral-900">
               Your exhibit is live!
             </h2>
-            <div
-              className="border-t border-neutral-300/40"
-              aria-hidden
-            />
+
+            <p className="text-center text-sm text-neutral-600">Share this link:</p>
+            <code className="block break-all rounded-lg border border-neutral-300/80 bg-white px-3 py-2 text-left text-xs shadow-sm">
+              {shareUrl}
+            </code>
+            <div className="flex items-center justify-center gap-2">
+              <button
+                type="button"
+                className={
+                  linkCopyFeedback === "copied"
+                    ? "rounded-lg border-2 border-green-600 bg-green-50 px-4 py-2 text-sm font-semibold text-green-900 shadow-sm transition-colors"
+                    : "rounded-lg border border-neutral-400/70 bg-white px-4 py-2 text-sm font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50"
+                }
+                onClick={() => void handleCopyShareLink()}
+              >
+                {linkCopyFeedback === "copied" ? "Copied!" : "Copy link"}
+              </button>
+              <ShareRow
+                url={shareUrl}
+                exhibitTitle={published.exhibitTitle}
+                blurb={
+                  published.theme.trim().length > 0
+                    ? published.theme.length > 120
+                      ? `${published.theme.slice(0, 117)}…`
+                      : published.theme
+                    : undefined
+                }
+              />
+            </div>
+            {(linkCopyFeedback === "copied" || linkCopyFeedback === "error") && (
+              <p
+                className="text-center text-xs leading-snug"
+                role="status"
+                aria-live="polite"
+              >
+                {linkCopyFeedback === "copied" ? (
+                  <span className="font-medium text-green-800">
+                    Copied to clipboard
+                  </span>
+                ) : (
+                  <span className="text-amber-950">
+                    Couldn&apos;t copy automatically. Tap the URL above,
+                    select all, then copy.
+                  </span>
+                )}
+              </p>
+            )}
+
+            <div className="text-center">
+              <a
+                href={shareUrl}
+                className="inline-block text-sm font-medium text-neutral-900 underline underline-offset-2"
+              >
+                View exhibit
+              </a>
+            </div>
+
+            <div className="border-t border-neutral-300/40" aria-hidden />
 
             <div className="space-y-3 text-center">
               {published.exhibitTitle.trim() ? (
@@ -875,78 +961,17 @@ export function CreateWizard({
               interactive={false}
               showLockChrome={false}
               variant="theme"
+              onTileClick={(slot) => setDetailCard(slot)}
             />
 
-            <div className="border-t border-neutral-300/60" aria-hidden />
-
-            <p className="text-center text-sm text-neutral-600">Share this link:</p>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-center">
-              <code className="break-all rounded-lg border border-neutral-300/80 bg-white px-3 py-2 text-left text-xs shadow-sm">
-                {shareUrl}
-              </code>
-              <div className="flex flex-col items-center gap-1.5 sm:items-stretch">
-                <button
-                  type="button"
-                  className={
-                    linkCopyFeedback === "copied"
-                      ? "rounded-lg border-2 border-green-600 bg-green-50 px-4 py-2 text-sm font-semibold text-green-900 shadow-sm transition-colors"
-                      : "rounded-lg border border-neutral-400/70 bg-white px-4 py-2 text-sm font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50"
-                  }
-                  onClick={() => void handleCopyShareLink()}
-                >
-                  {linkCopyFeedback === "copied" ? "Copied!" : "Copy link"}
-                </button>
-                {(linkCopyFeedback === "copied" ||
-                  linkCopyFeedback === "error") && (
-                  <p
-                    className="text-center text-xs leading-snug"
-                    role="status"
-                    aria-live="polite"
-                  >
-                    {linkCopyFeedback === "copied" ? (
-                      <span className="font-medium text-green-800">
-                        Copied to clipboard
-                      </span>
-                    ) : (
-                      <span className="text-amber-950">
-                        Couldn&apos;t copy automatically. Tap the URL above,
-                        select all, then copy.
-                      </span>
-                    )}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <ShareRow
-              url={shareUrl}
-              exhibitTitle={published.exhibitTitle}
-              blurb={
-                published.theme.trim().length > 0
-                  ? published.theme.length > 120
-                    ? `${published.theme.slice(0, 117)}…`
-                    : published.theme
-                  : undefined
-              }
-            />
-
-            <div className="text-center">
-              <a
-                href={shareUrl}
-                className="inline-block text-sm font-medium text-neutral-900 underline underline-offset-2"
-              >
-                View exhibit
-              </a>
-            </div>
             <p className="text-center text-xs text-neutral-500">
               To curate a new exhibit,{" "}
-              <Link
+              <a
                 href="/"
-                prefetch={false}
                 className="font-medium text-neutral-900 underline underline-offset-2"
               >
                 go here
-              </Link>
+              </a>
             </p>
           </section>
         )}

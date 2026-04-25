@@ -61,14 +61,6 @@ export default async function Home() {
         )}
       />
       <main className="min-h-dvh-safe touch-manipulation overflow-auto bg-[var(--canvas)] px-4 pb-safe pt-6">
-        <header className="mx-auto mb-4 max-w-sm text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-neutral-900">
-            {SITE_NAME}
-          </h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            Curate your own art exhibit
-          </p>
-        </header>
         <CreateWizard recentExhibits={recentExhibits} />
         <HomeSiteFooter
           aboutModal={<AboutContent variant="modal" />}

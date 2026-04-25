@@ -109,6 +109,23 @@ export default async function ExhibitPage({ params }: Props) {
 
       <PublicExhibitBody slots={slots} />
 
+      <div className="mt-8 flex flex-col items-center gap-2 text-center">
+        <Link
+          href="/"
+          prefetch={false}
+          className="text-sm font-medium text-neutral-900 underline underline-offset-2"
+        >
+          Curate your own exhibit on Art Fold
+        </Link>
+        <Link
+          href="/exhibits"
+          prefetch={false}
+          className="text-sm font-medium text-neutral-900 underline underline-offset-2"
+        >
+          Browse all Exhibits
+        </Link>
+      </div>
+
       <div className="mt-10 space-y-6 [&_footer]:mt-0">
         <HomeSiteFooter
           aboutModal={<AboutContent variant="modal" />}
@@ -122,22 +139,6 @@ export default async function ExhibitPage({ params }: Props) {
             day: "numeric",
           })}
         </p>
-        <div className="flex flex-col items-center gap-2 text-center">
-          <Link
-            href="/"
-            prefetch={false}
-            className="text-sm font-medium text-neutral-900 underline underline-offset-2"
-          >
-            Curate your own exhibit on Art Fold
-          </Link>
-          <Link
-            href="/exhibits"
-            prefetch={false}
-            className="text-sm font-medium text-neutral-900 underline underline-offset-2"
-          >
-            Browse all Exhibits
-          </Link>
-        </div>
       </div>
     </main>
   );

@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
+import { Geist } from "next/font/google";
 import { JsonLd } from "@/components/JsonLd";
+
+const geist = Geist({
+  subsets: ["latin"],
+  variable: "--font-geist",
+  display: "swap",
+});
 import {
   DEFAULT_SITE_ORIGIN,
   SITE_NAME,
@@ -45,8 +52,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-[var(--canvas)] antialiased">
+    <html lang="en" className={geist.variable}>
+      <body className="min-h-screen bg-[var(--canvas)] antialiased" style={{ fontFamily: "var(--font-geist), sans-serif" }}>
         <JsonLd data={siteGraphJsonLd()} />
         {children}
         <Analytics />
