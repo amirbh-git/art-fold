@@ -65,6 +65,9 @@ export default async function Home() {
           <h1 className="text-3xl font-bold tracking-tight text-neutral-900">
             {SITE_NAME}
           </h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            Curate your own art exhibit
+          </p>
         </header>
         <CreateWizard recentExhibits={recentExhibits} />
         <HomeSiteFooter

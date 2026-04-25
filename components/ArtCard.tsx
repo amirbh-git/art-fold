@@ -26,7 +26,7 @@ const SWIPE_THRESHOLD = 80;
 export const ART_CARD_FLY_MS = 320;
 
 /** Image viewport + title band; sync CreateWizard loading / empty placeholders. */
-export const ART_CARD_TOTAL_HEIGHT_CLASS = "h-[426px]";
+export const ART_CARD_TOTAL_HEIGHT_CLASS = "h-[404px]";
 
 export const ArtCard = forwardRef<ArtCardHandle, Props>(function ArtCard(
   { card, onPass, onCurate, onTapImage },
@@ -151,7 +151,7 @@ export const ArtCard = forwardRef<ArtCardHandle, Props>(function ArtCard(
             aria-hidden
           />
           <div className="px-4 pt-2">
-            <p className="line-clamp-2 text-left text-base font-medium leading-snug text-neutral-900">
+            <p className="truncate text-left text-base font-medium leading-snug text-neutral-900">
               {card.title}
             </p>
           </div>
