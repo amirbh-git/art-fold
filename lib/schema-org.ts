@@ -1,5 +1,10 @@
 import { SITE_NAME, absoluteUrl, siteOrigin } from "@/lib/site";
 
+const BRAND_SAME_AS = [
+  "https://github.com/amirbh-git/art-fold",
+  "https://www.amirbh.com/",
+] as const;
+
 function ids() {
   const base = siteOrigin();
   return {
@@ -15,6 +20,7 @@ function organizationNode() {
     "@id": orgId,
     name: SITE_NAME,
     url: siteOrigin(),
+    sameAs: BRAND_SAME_AS,
     description:
       "Interactive tool to browse open-access museum collections and publish a personal six-work digital exhibition.",
   };
@@ -30,6 +36,11 @@ function websiteNode() {
     description:
       "Discover public-domain museum art, browse open-access museum APIs, and curate a shareable six-work exhibit.",
     publisher: { "@id": orgId },
+    potentialAction: {
+      "@type": "SearchAction",
+      target: `${absoluteUrl("/exhibits")}?q={search_term_string}`,
+      "query-input": "required name=search_term_string",
+    },
   };
 }
 
