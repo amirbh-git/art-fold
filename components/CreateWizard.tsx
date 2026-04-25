@@ -564,6 +564,7 @@ export function CreateWizard({
         {/* ─── HEADER ─── */}
         {step === "done" ? (
           <p className="mb-4 text-center">
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a
               href="/"
               className="text-sm font-medium text-neutral-900 underline underline-offset-2"
@@ -575,6 +576,7 @@ export function CreateWizard({
           <header className="mb-4 text-center">
             <h1 className="inline-flex items-center text-3xl font-bold tracking-tight text-neutral-900">
               <span>Art</span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/artfold-mark.svg"
                 alt=""
@@ -966,6 +968,7 @@ export function CreateWizard({
 
             <p className="text-center text-xs text-neutral-500">
               To curate a new exhibit,{" "}
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
               <a
                 href="/"
                 className="font-medium text-neutral-900 underline underline-offset-2"
