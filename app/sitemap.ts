@@ -1,7 +1,13 @@
 import type { MetadataRoute } from "next";
-import { prisma } from "@/lib/prisma";
-import { SLOT_COUNT } from "@/lib/wall-layout";
 import { DEFAULT_SITE_ORIGIN, siteOrigin } from "@/lib/site";
+
+/**
+ * Revalidate every hour so Vercel caches this as ISR rather than
+ * invoking the serverless function on every request. Prevents 500s
+ * from DB cold-start / connection-pool timeouts that cause Google
+ * Search Console "couldn't fetch" errors.
+ */
+export const revalidate = 3600;
 
 const STATIC_PATHS = [
   "",
@@ -17,6 +23,11 @@ const DB_TIMEOUT_MS = 4_000;
 async function fetchExhibitEntries(
   base: string,
 ): Promise<MetadataRoute.Sitemap> {
+  // Lazy-import Prisma so a DB connection failure can never crash the
+  // module-level evaluation and take down the entire sitemap response.
+  const { prisma } = await import("@/lib/prisma");
+  const { SLOT_COUNT } = await import("@/lib/wall-layout");
+
   const exhibits = await prisma.exhibit.findMany({
     where: {
       featureOnHomepage: true,
