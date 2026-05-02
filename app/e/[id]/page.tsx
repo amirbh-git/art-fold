@@ -104,7 +104,9 @@ export default async function ExhibitPage({ params }: Props) {
             {exhibit.theme}
           </p>
         ) : null}
-        <p className="mt-2 text-sm text-neutral-600">by {curator}</p>
+        <p className="mt-2 text-sm text-neutral-600">
+          curated by {curator}
+        </p>
       </div>
 
       <PublicExhibitBody slots={slots} />

@@ -1015,7 +1015,7 @@ export function CreateWizard({
               prefetch={false}
               className="font-medium text-neutral-900 underline underline-offset-2"
             >
-              All exhibits
+              All Exhibits
             </Link>{" "}
             page. If you turn it off, your exhibit is still published—only people
             with the direct link can open it; it won&apos;t be listed on the site.

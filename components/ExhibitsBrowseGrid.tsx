@@ -28,7 +28,7 @@ export function ExhibitsBrowseGrid({ exhibits }: Props) {
             <span className="mb-1.5 line-clamp-3 text-[11px] font-semibold leading-snug text-neutral-900">
               {ex.displayTitle}
             </span>
-            <div className="mt-auto flex w-full justify-center [zoom:0.55]">
+            <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center [zoom:0.55]">
               <GalleryWall
                 slots={ex.slots}
                 interactive={false}

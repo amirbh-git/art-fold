@@ -9,14 +9,14 @@ import { prisma } from "@/lib/prisma";
 import { SITE_NAME, absoluteUrl } from "@/lib/site";
 import { SLOT_COUNT } from "@/lib/wall-layout";
 
-const PAGE_TITLE = `All exhibits — ${SITE_NAME}`;
+const PAGE_TITLE = `All Exhibits — ${SITE_NAME}`;
 const PAGE_DESC = "Browse curated exhibits listed on Art Fold.";
 
 const canonical = absoluteUrl("/exhibits");
 
 const PER_PAGE = 12;
 
-/** Full wall and opted in to site listings (home + All exhibits); URL-only if unchecked at publish. */
+/** Full wall and opted in to site listings (home + All Exhibits); URL-only if unchecked at publish. */
 const whereListed = {
   featureOnHomepage: true,
   slots: {
@@ -82,7 +82,7 @@ export default async function ExhibitsIndexPage({ searchParams }: Props) {
           </Link>
         </p>
         <h1 className="text-2xl font-bold tracking-tight text-neutral-900">
-          All exhibits
+          All Exhibits
         </h1>
         <p className="mt-2 text-sm text-neutral-600">
           {total} {total === 1 ? "exhibit" : "exhibits"}
