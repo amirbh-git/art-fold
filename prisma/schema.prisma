@@ -43,6 +43,8 @@ model ArtPoolEntry {
   objectId  String
   /** Artist string captured at pool build when the source API provides it (any `source`). */
   poolArtist String?
+  /** Rich artwork metadata captured by `npm run art-pool:enrich-metadata`. JSON blob matching WallSlotPayload shape (minus source/objectId/artist). */
+  metadata  Json?
   createdAt DateTime @default(now())
 
   @@unique([source, objectId])
@@ -59,6 +61,7 @@ model ArtPoolArchive {
   source    String
   objectId  String
   poolArtist String?
+  metadata  Json?
   createdAt DateTime @default(now())
 
   @@unique([source, objectId])

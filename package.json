@@ -37,6 +37,7 @@
     "art-pool:topup:nma": "tsx scripts/build-art-pool.ts --only nma --append",
     "art-pool:build:cooper": "tsx scripts/build-art-pool.ts --only cooper",
     "art-pool:topup:cooper": "tsx scripts/build-art-pool.ts --only cooper --append",
+    "art-pool:enrich-metadata": "tsx scripts/enrich-art-pool-metadata.ts",
     "art-pool:archive-full": "tsx scripts/art-pool-archive-full.ts",
     "art-pool:restore-from-archive": "tsx scripts/art-pool-restore-from-archive.ts",
     "art-pool:cap": "tsx scripts/art-pool-cap.ts",
