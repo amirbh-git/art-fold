@@ -185,7 +185,7 @@ function parseArgs(): {
 async function enrichSource(
   source: EnrichableSource,
   opts: { limit: number; force: boolean },
-): Promise<{ enriched: number; failed: number; elapsedMs: number }> {
+): Promise<{ enriched: number; noData: number; elapsedMs: number }> {
   const { limit, force } = opts;
   const { concurrency, batchDelayMs } = sourceConfig(source);
 
@@ -199,8 +199,8 @@ async function enrichSource(
   });
 
   if (rows.length === 0) {
-    console.log(`  [${source}] Nothing to enrich — all rows already have metadata.\n`);
-    return { enriched: 0, failed: 0, elapsedMs: 0 };
+    console.log(`  [${source}] Nothing to enrich — all rows already processed.\n`);
+    return { enriched: 0, noData: 0, elapsedMs: 0 };
   }
 
   const total = rows.length;
@@ -212,16 +212,11 @@ async function enrichSource(
 
   let done = 0;
   let enriched = 0;
-  let failed = 0;
+  let noData = 0; // null returned by API (no public image, deleted, etc.) — stored as {} so row is not retried
   const sourceStart = Date.now();
-  /** Rolling window of the last N batch durations for ETA smoothing. */
-  const recentBatchMs: number[] = [];
-  const WINDOW = 10;
-
   const LOG_EVERY = Math.max(1, Math.min(200, Math.ceil(total / 100)));
 
   for (let i = 0; i < rows.length; i += concurrency) {
-    const batchStart = Date.now();
     const batch = rows.slice(i, i + concurrency);
 
     const results = await Promise.all(
@@ -235,24 +230,26 @@ async function enrichSource(
       }),
     );
 
-    const updates = results.flatMap(({ row, slot }) => {
-      if (!slot) { failed++; return []; }
-      enriched++;
-      return [
-        prisma.artPoolEntry.update({
+    const updates = results.map(({ row, slot }) => {
+      if (!slot) {
+        noData++;
+        // Store empty object {} so the row is marked as attempted and won't be retried.
+        // (A SQL NULL would cause it to be picked up again on the next run.)
+        return prisma.artPoolEntry.update({
           where: { id: row.id },
-          data: { metadata: slotToMetadata(slot) },
-        }),
-      ];
+          data: { metadata: {} },
+        });
+      }
+      enriched++;
+      return prisma.artPoolEntry.update({
+        where: { id: row.id },
+        data: { metadata: slotToMetadata(slot) },
+      });
     });
 
-    if (updates.length > 0) await prisma.$transaction(updates);
+    await prisma.$transaction(updates);
 
     done += batch.length;
-
-    const batchMs = Date.now() - batchStart;
-    recentBatchMs.push(batchMs + (i + concurrency < rows.length ? delay : 0));
-    if (recentBatchMs.length > WINDOW) recentBatchMs.shift();
 
     if (done % LOG_EVERY === 0 || done === total) {
       const elapsedMs = Date.now() - sourceStart;
@@ -264,7 +261,7 @@ async function enrichSource(
       const bar = buildBar(done, total, 20);
       console.log(
         `    ${bar} ${String(done).padStart(String(total).length)}/${total} (${pct(done, total)})` +
-        ` | ${rowsPerSec.toFixed(1)} rows/s` +
+        ` | ${rowsPerSec.toFixed(1)} rows/s | ${enriched} enriched, ${noData} no-data` +
         ` | elapsed ${fmtDuration(elapsedMs)}` +
         (done < total
           ? ` | ETA ${fmtDuration(etaMs)} (finishes ~${fmtTime(etaAt)})`
@@ -277,10 +274,10 @@ async function enrichSource(
 
   const totalMs = Date.now() - sourceStart;
   console.log(
-    `  [${source}] Finished — ${enriched.toLocaleString()} enriched, ${failed.toLocaleString()} failed` +
+    `  [${source}] Finished — ${enriched.toLocaleString()} enriched, ${noData.toLocaleString()} no-data (no public image)` +
     ` | total time ${fmtDuration(totalMs)}\n`,
   );
-  return { enriched, failed, elapsedMs: totalMs };
+  return { enriched, noData, elapsedMs: totalMs };
 }
 
 function buildBar(done: number, total: number, width: number): string {
@@ -357,7 +354,7 @@ async function main(): Promise<void> {
 
   const overallStart = Date.now();
   let grandEnriched = 0;
-  let grandFailed = 0;
+  let grandNoData = 0;
 
   for (let si = 0; si < sources.length; si++) {
     const src = sources[si]!;
@@ -366,9 +363,9 @@ async function main(): Promise<void> {
       `── Source ${si + 1}/${sources.length}: ${src}` +
       (sources.length > 1 ? ` (${remaining - 1} source${remaining - 1 !== 1 ? "s" : ""} after this)` : ""),
     );
-    const { enriched, failed } = await enrichSource(src, { limit, force });
+    const { enriched, noData } = await enrichSource(src, { limit, force });
     grandEnriched += enriched;
-    grandFailed += failed;
+    grandNoData += noData;
 
     if (si < sources.length - 1) {
       const elapsed = Date.now() - overallStart;
@@ -399,8 +396,8 @@ async function main(): Promise<void> {
     console.log(`    ${row.source.padEnd(10)} ${bar} ${String(meta).padStart(7)}/${total} (${pct(meta, total)})`);
   }
   console.log();
-  console.log(`  Enriched this run: ${grandEnriched.toLocaleString()} rows`);
-  console.log(`  Failed this run:   ${grandFailed.toLocaleString()} rows`);
+  console.log(`  Enriched this run: ${grandEnriched.toLocaleString()} rows (have metadata)`);
+  console.log(`  No-data this run:  ${grandNoData.toLocaleString()} rows (no public image — stored as {} to skip on re-run)`);
   console.log(`  Total time:        ${fmtDuration(totalElapsed)}`);
   console.log("═══════════════════════════════════════════════════════════════");
 }
