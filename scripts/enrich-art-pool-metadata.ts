@@ -10,9 +10,11 @@
  * Sources: artic, met, cleveland, whitney, rijks, vam, ngl, getty, cooper, mplus, harvard, popular
  * (nma is excluded)
  *
- * Concurrency is kept low to respect API rate limits. Cooper is capped at 1 req/s.
- * Set ENRICH_CONCURRENCY=N to override the default (3).
- * Set ENRICH_BATCH_DELAY_MS=N to override the inter-batch pause (200ms default).
+ * Concurrency: default 5 parallel requests per batch. Cooper is hard-capped at 1 req/s.
+ * Set ENRICH_CONCURRENCY=N to override. Set ENRICH_BATCH_DELAY_MS=N for inter-batch pause.
+ *
+ * NOTE: Running all sources takes ~50+ hours total. Run one source at a time
+ * (--only <source>) across multiple sessions.
  */
 
 import { config as loadEnv } from "dotenv";
@@ -87,30 +89,18 @@ async function fetchForSource(
   objectId: string,
 ): Promise<WallSlotPayload | null> {
   switch (source) {
-    case "artic":
-      return fetchArticArtwork(objectId);
-    case "met":
-      return fetchMetObject(objectId);
-    case "cleveland":
-      return fetchClevelandArtwork(objectId);
-    case "whitney":
-      return fetchWhitneyArtwork(objectId);
-    case "rijks":
-      return fetchRijksArtwork(objectId);
-    case "vam":
-      return fetchVamObject(objectId);
-    case "ngl":
-      return fetchNglObject(objectId);
-    case "getty":
-      return fetchGettyArtwork(objectId);
-    case "cooper":
-      return fetchCooperObject(objectId);
-    case "mplus":
-      return fetchMplusArtwork(objectId);
-    case "harvard":
-      return fetchHarvardObject(objectId);
-    case "popular":
-      return fetchPopularCompositeUnderlying(objectId);
+    case "artic":    return fetchArticArtwork(objectId);
+    case "met":      return fetchMetObject(objectId);
+    case "cleveland":return fetchClevelandArtwork(objectId);
+    case "whitney":  return fetchWhitneyArtwork(objectId);
+    case "rijks":    return fetchRijksArtwork(objectId);
+    case "vam":      return fetchVamObject(objectId);
+    case "ngl":      return fetchNglObject(objectId);
+    case "getty":    return fetchGettyArtwork(objectId);
+    case "cooper":   return fetchCooperObject(objectId);
+    case "mplus":    return fetchMplusArtwork(objectId);
+    case "harvard":  return fetchHarvardObject(objectId);
+    case "popular":  return fetchPopularCompositeUnderlying(objectId);
   }
 }
 
@@ -118,24 +108,43 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Cooper enforces ~1 req/s; all other sources tolerate higher concurrency. */
+/** Cooper enforces ~1 req/s. Getty is slow with per-object GETs. Others are fine at higher concurrency. */
 function sourceConfig(source: EnrichableSource): {
   concurrency: number;
   batchDelayMs: number;
 } {
   const concurrency =
-    Number.parseInt(process.env.ENRICH_CONCURRENCY ?? "", 10) || 3;
+    Number.parseInt(process.env.ENRICH_CONCURRENCY ?? "", 10) || 5;
   const batchDelayMs =
-    Number.parseInt(process.env.ENRICH_BATCH_DELAY_MS ?? "", 10) || 200;
+    Number.parseInt(process.env.ENRICH_BATCH_DELAY_MS ?? "", 10) || 150;
 
-  if (source === "cooper") {
-    return { concurrency: 1, batchDelayMs: 1100 };
-  }
-  if (source === "getty") {
-    return { concurrency: Math.min(concurrency, 3), batchDelayMs: Math.max(batchDelayMs, 300) };
-  }
+  if (source === "cooper") return { concurrency: 1, batchDelayMs: 1100 };
+  if (source === "getty")  return { concurrency: Math.min(concurrency, 3), batchDelayMs: Math.max(batchDelayMs, 300) };
   return { concurrency, batchDelayMs };
 }
+
+// ─── Formatting helpers ───────────────────────────────────────────────────────
+
+function fmtDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "--:--:--";
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${String(sec).padStart(2, "0")}s`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2, "0")}s`;
+  return `${sec}s`;
+}
+
+function fmtTime(date: Date): string {
+  return date.toLocaleTimeString("en-US", { hour12: false });
+}
+
+function pct(n: number, total: number): string {
+  return total === 0 ? "0%" : `${Math.round((n / total) * 100)}%`;
+}
+
+// ─── Arg parsing ─────────────────────────────────────────────────────────────
 
 function parseArgs(): {
   only: EnrichableSource | null;
@@ -151,14 +160,14 @@ function parseArgs(): {
     const a = argv[i]!;
     if (a === "--only") {
       const v = argv[i + 1]?.trim();
-      if (v && isEnrichableSource(v)) only = v;
+      if (v && isEnrichableSource(v)) { only = v; i++; }
     }
     const onlyEq = a.match(/^--only=(.+)$/);
     if (onlyEq?.[1] && isEnrichableSource(onlyEq[1])) only = onlyEq[1];
 
     if (a === "--limit") {
       const n = Number.parseInt(argv[i + 1] ?? "", 10);
-      if (Number.isFinite(n) && n > 0) limit = n;
+      if (Number.isFinite(n) && n > 0) { limit = n; i++; }
     }
     const limitEq = a.match(/^--limit=(\d+)$/);
     if (limitEq?.[1]) {
@@ -171,10 +180,12 @@ function parseArgs(): {
   return { only, limit, force };
 }
 
+// ─── Core enrichment ─────────────────────────────────────────────────────────
+
 async function enrichSource(
   source: EnrichableSource,
   opts: { limit: number; force: boolean },
-): Promise<void> {
+): Promise<{ enriched: number; failed: number; elapsedMs: number }> {
   const { limit, force } = opts;
   const { concurrency, batchDelayMs } = sourceConfig(source);
 
@@ -188,17 +199,29 @@ async function enrichSource(
   });
 
   if (rows.length === 0) {
-    console.log(`  ${source}: no rows to enrich (all done or source absent)\n`);
-    return;
+    console.log(`  [${source}] Nothing to enrich — all rows already have metadata.\n`);
+    return { enriched: 0, failed: 0, elapsedMs: 0 };
   }
 
-  console.log(`  ${source}: enriching ${rows.length} rows (concurrency=${concurrency}, delay=${batchDelayMs}ms)…`);
+  const total = rows.length;
+  const { concurrency: c, batchDelayMs: delay } = sourceConfig(source);
+  console.log(
+    `  [${source}] ${total.toLocaleString()} rows to enrich` +
+    ` | concurrency=${c} | batch-delay=${delay}ms`,
+  );
 
   let done = 0;
-  let fetched = 0;
+  let enriched = 0;
   let failed = 0;
+  const sourceStart = Date.now();
+  /** Rolling window of the last N batch durations for ETA smoothing. */
+  const recentBatchMs: number[] = [];
+  const WINDOW = 10;
+
+  const LOG_EVERY = Math.max(1, Math.min(200, Math.ceil(total / 100)));
 
   for (let i = 0; i < rows.length; i += concurrency) {
+    const batchStart = Date.now();
     const batch = rows.slice(i, i + concurrency);
 
     const results = await Promise.all(
@@ -213,11 +236,8 @@ async function enrichSource(
     );
 
     const updates = results.flatMap(({ row, slot }) => {
-      if (!slot) {
-        failed++;
-        return [];
-      }
-      fetched++;
+      if (!slot) { failed++; return []; }
+      enriched++;
       return [
         prisma.artPoolEntry.update({
           where: { id: row.id },
@@ -226,56 +246,163 @@ async function enrichSource(
       ];
     });
 
-    if (updates.length > 0) {
-      await prisma.$transaction(updates);
-    }
+    if (updates.length > 0) await prisma.$transaction(updates);
 
     done += batch.length;
 
-    if (done % 50 === 0 || done === rows.length) {
-      console.log(`    ${source}: ${done}/${rows.length} processed (${fetched} enriched, ${failed} failed)`);
+    const batchMs = Date.now() - batchStart;
+    recentBatchMs.push(batchMs + (i + concurrency < rows.length ? delay : 0));
+    if (recentBatchMs.length > WINDOW) recentBatchMs.shift();
+
+    if (done % LOG_EVERY === 0 || done === total) {
+      const elapsedMs = Date.now() - sourceStart;
+      const rowsPerSec = done / (elapsedMs / 1000);
+      const remaining = total - done;
+      const etaMs = remaining / rowsPerSec * 1000;
+      const etaAt = new Date(Date.now() + etaMs);
+
+      const bar = buildBar(done, total, 20);
+      console.log(
+        `    ${bar} ${String(done).padStart(String(total).length)}/${total} (${pct(done, total)})` +
+        ` | ${rowsPerSec.toFixed(1)} rows/s` +
+        ` | elapsed ${fmtDuration(elapsedMs)}` +
+        (done < total
+          ? ` | ETA ${fmtDuration(etaMs)} (finishes ~${fmtTime(etaAt)})`
+          : " | done"),
+      );
     }
 
-    if (i + concurrency < rows.length) {
-      await sleep(batchDelayMs);
-    }
+    if (i + concurrency < rows.length) await sleep(batchDelayMs);
   }
 
-  console.log(`  ${source}: done — ${fetched} enriched, ${failed} failed\n`);
+  const totalMs = Date.now() - sourceStart;
+  console.log(
+    `  [${source}] Finished — ${enriched.toLocaleString()} enriched, ${failed.toLocaleString()} failed` +
+    ` | total time ${fmtDuration(totalMs)}\n`,
+  );
+  return { enriched, failed, elapsedMs: totalMs };
 }
+
+function buildBar(done: number, total: number, width: number): string {
+  const filled = Math.round((done / total) * width);
+  return "[" + "█".repeat(filled) + "░".repeat(width - filled) + "]";
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   const { only, limit, force } = parseArgs();
+  const sources: EnrichableSource[] = only ? [only] : [...ENRICHABLE_SOURCES];
 
-  const sources: EnrichableSource[] = only
-    ? [only]
-    : [...ENRICHABLE_SOURCES];
-
-  if (only) {
-    console.log(`Enriching metadata: ${only} only${force ? " (force)" : ""}${limit !== Number.POSITIVE_INFINITY ? ` (limit ${limit})` : ""}\n`);
-  } else {
-    console.log(`Enriching metadata: all sources${force ? " (force)" : ""}${limit !== Number.POSITIVE_INFINITY ? ` (limit ${limit} per source)` : ""}\n`);
-  }
-
-  for (const source of sources) {
-    await enrichSource(source, { limit, force });
-  }
-
-  const counts = await prisma.artPoolEntry.groupBy({
+  // ── Pre-flight: count rows per source so we can show an upfront estimate ──
+  const allCounts = await prisma.artPoolEntry.groupBy({
     by: ["source"],
     _count: { _all: true },
   });
+  const countMap = new Map(allCounts.map((r) => [r.source, r._count._all]));
+
   const withMeta = await prisma.$queryRaw<Array<{ source: string; n: bigint }>>`
     SELECT source, COUNT(*) AS n FROM "ArtPoolEntry" WHERE metadata IS NOT NULL GROUP BY source ORDER BY source
   `;
   const metaMap = new Map(withMeta.map((r) => [r.source, Number(r.n)]));
 
-  console.log("Coverage after enrichment:");
-  for (const row of counts.sort((a, b) => a.source.localeCompare(b.source))) {
-    const total = row._count._all;
-    const meta = metaMap.get(row.source) ?? 0;
-    console.log(`  ${row.source}: ${meta}/${total} rows have metadata`);
+  console.log("═══════════════════════════════════════════════════════════════");
+  console.log("  Art Pool Metadata Enrichment");
+  console.log("═══════════════════════════════════════════════════════════════");
+  if (force) console.log("  Mode: --force (overwriting existing metadata)");
+  if (limit !== Number.POSITIVE_INFINITY) console.log(`  Mode: --limit ${limit} per source`);
+  console.log();
+
+  console.log("  Source plan:");
+  let totalToProcess = 0;
+  for (const src of sources) {
+    const total = countMap.get(src) ?? 0;
+    const done = metaMap.get(src) ?? 0;
+    const todo = force ? total : total - done;
+    const cappedTodo = limit === Number.POSITIVE_INFINITY ? todo : Math.min(todo, limit);
+    const { concurrency, batchDelayMs } = sourceConfig(src);
+    // Rough estimate: assume ~400ms per fetch including delay amortized
+    const secEst = cappedTodo > 0
+      ? Math.ceil((cappedTodo / concurrency) * ((batchDelayMs + 400) / 1000))
+      : 0;
+    const tag = cappedTodo === 0 ? " ✓ complete" : ` ~${fmtDuration(secEst * 1000)}`;
+    console.log(
+      `    ${src.padEnd(10)} ${String(cappedTodo).padStart(7)} rows remaining${tag}`,
+    );
+    totalToProcess += cappedTodo;
   }
+  const overallEstSec = sources.reduce((acc, src) => {
+    const total = countMap.get(src) ?? 0;
+    const done = metaMap.get(src) ?? 0;
+    const todo = force ? total : total - done;
+    const cappedTodo = limit === Number.POSITIVE_INFINITY ? todo : Math.min(todo, limit);
+    const { concurrency, batchDelayMs } = sourceConfig(src);
+    return acc + (cappedTodo > 0
+      ? Math.ceil((cappedTodo / concurrency) * ((batchDelayMs + 400) / 1000))
+      : 0);
+  }, 0);
+
+  console.log();
+  console.log(`  Total rows to process: ${totalToProcess.toLocaleString()}`);
+  console.log(`  Estimated total time:  ~${fmtDuration(overallEstSec * 1000)}`);
+  console.log(`  Started at:            ${fmtTime(new Date())}`);
+  if (overallEstSec > 0) {
+    console.log(
+      `  Expected finish:       ~${fmtTime(new Date(Date.now() + overallEstSec * 1000))}` +
+      (overallEstSec > 86400 ? ` (+${Math.floor(overallEstSec / 86400)}d)` : ""),
+    );
+  }
+  console.log("═══════════════════════════════════════════════════════════════");
+  console.log();
+
+  const overallStart = Date.now();
+  let grandEnriched = 0;
+  let grandFailed = 0;
+
+  for (let si = 0; si < sources.length; si++) {
+    const src = sources[si]!;
+    const remaining = sources.length - si;
+    console.log(
+      `── Source ${si + 1}/${sources.length}: ${src}` +
+      (sources.length > 1 ? ` (${remaining - 1} source${remaining - 1 !== 1 ? "s" : ""} after this)` : ""),
+    );
+    const { enriched, failed } = await enrichSource(src, { limit, force });
+    grandEnriched += enriched;
+    grandFailed += failed;
+
+    if (si < sources.length - 1) {
+      const elapsed = Date.now() - overallStart;
+      const fractionDone = (si + 1) / sources.length;
+      const overallEta = fractionDone > 0 ? (elapsed / fractionDone) * (1 - fractionDone) : 0;
+      console.log(
+        `  Overall: ${si + 1}/${sources.length} sources done` +
+        ` | elapsed ${fmtDuration(elapsed)}` +
+        ` | remaining ~${fmtDuration(overallEta)}\n`,
+      );
+    }
+  }
+
+  const totalElapsed = Date.now() - overallStart;
+
+  // ── Final coverage table ───────────────────────────────────────────────────
+  const finalWithMeta = await prisma.$queryRaw<Array<{ source: string; n: bigint }>>`
+    SELECT source, COUNT(*) AS n FROM "ArtPoolEntry" WHERE metadata IS NOT NULL GROUP BY source ORDER BY source
+  `;
+  const finalMetaMap = new Map(finalWithMeta.map((r) => [r.source, Number(r.n)]));
+
+  console.log("═══════════════════════════════════════════════════════════════");
+  console.log("  Final coverage:");
+  for (const row of allCounts.sort((a, b) => a.source.localeCompare(b.source))) {
+    const total = row._count._all;
+    const meta = finalMetaMap.get(row.source) ?? 0;
+    const bar = buildBar(meta, total, 15);
+    console.log(`    ${row.source.padEnd(10)} ${bar} ${String(meta).padStart(7)}/${total} (${pct(meta, total)})`);
+  }
+  console.log();
+  console.log(`  Enriched this run: ${grandEnriched.toLocaleString()} rows`);
+  console.log(`  Failed this run:   ${grandFailed.toLocaleString()} rows`);
+  console.log(`  Total time:        ${fmtDuration(totalElapsed)}`);
+  console.log("═══════════════════════════════════════════════════════════════");
 }
 
 main()
