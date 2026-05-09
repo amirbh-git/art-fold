@@ -34,7 +34,6 @@ export async function availableSources(): Promise<ArtSourceId[]> {
     "getty",
     "vam",
     "mplus",
-    "nma",
     "cooper",
   ];
   if (isHarvardConfigured()) base.push("harvard");
