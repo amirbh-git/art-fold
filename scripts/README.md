@@ -17,3 +17,4 @@ CLI utilities run from the repo root via `npm run …` (see [package.json](../pa
 | `count-popular-pool-by-artist.ts` | Count pool rows by artist / source. |
 | `benchmark-art-fetch.ts` | Benchmark art API fetch latency. |
 | `verify-prod-build.mjs` | Prestart guard (`npm run prestart`). |
+| `build-sitemap.ts` | Generate `public/sitemap.xml` from listed `Exhibit` rows; runs in `npm run build` (`npm run build-sitemap` standalone). Fails soft so a DB outage during build keeps the previously committed sitemap. |
